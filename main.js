@@ -734,28 +734,51 @@ class BodyTrackingApp {
                             z: nose.z - faceCenter.z
                         };
                         
-                        // Calculate rotations
+                        // Calculate rotations with proper constraints
+                        // Limit rotation angles to prevent 360° spins
                         let rotY = Math.atan2(faceDirection.x, faceDirection.z) * 2;
+                        // Clamp Y rotation to reasonable range (±90°)
+                        rotY = Math.max(Math.min(rotY, Math.PI/2), -Math.PI/2);
+                        
                         const calibrationValue = this.headCalibrationValue || -3.0;
                         let rotX = (Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2) + calibrationValue;
+                        // Clamp X rotation to prevent unrealistic angles (±60°)
+                        rotX = Math.max(Math.min(rotX, Math.PI/3), -Math.PI/3);
                         
-                        // Apply smoothing using moving average
-                        this.headRotationHistory.push({x: rotX, y: rotY});
-                        if (this.headRotationHistory.length > 10) {
+                        // Calculate Z rotation based on eye tilt
+                        const eyeVector = {
+                            x: rightEye.x - leftEye.x,
+                            y: rightEye.y - leftEye.y
+                        };
+                        let rotZ = Math.atan2(eyeVector.y, eyeVector.x);
+                        // Clamp Z rotation for realism (±30°)
+                        rotZ = Math.max(Math.min(rotZ, Math.PI/6), -Math.PI/6);
+                        
+                        // Apply advanced smoothing using moving average with enhanced weight distribution
+                        this.headRotationHistory.push({x: rotX, y: rotY, z: rotZ});
+                        if (this.headRotationHistory.length > 15) { // Increased buffer for smoother motion
                             this.headRotationHistory.shift();
                         }
                         
-                        let smoothX = 0, smoothY = 0;
+                        // Apply exponential smoothing for more natural motion
+                        const smoothFactor = this.headSmoothingFactor || 0.5;
+                        let smoothX = 0, smoothY = 0, smoothZ = 0;
+                        let totalWeight = 0;
+                        
                         for (let i = 0; i < this.headRotationHistory.length; i++) {
-                            // Apply more weight to recent positions
-                            const weight = (i + 1) / ((this.headRotationHistory.length * (this.headRotationHistory.length + 1)) / 2);
+                            // Higher weight to more recent samples with exponential falloff
+                            const weight = Math.exp(smoothFactor * i / this.headRotationHistory.length);
+                            totalWeight += weight;
+                            
                             smoothX += this.headRotationHistory[i].x * weight;
                             smoothY += this.headRotationHistory[i].y * weight;
+                            smoothZ += this.headRotationHistory[i].z * weight;
                         }
                         
-                        // Apply final smoothed rotation
-                        headBone.rotation.y = smoothY;
-                        headBone.rotation.x = smoothX;
+                        // Normalize and apply final smoothed rotation
+                        headBone.rotation.x = smoothX / totalWeight;
+                        headBone.rotation.y = smoothY / totalWeight;
+                        headBone.rotation.z = smoothZ / totalWeight;
                     }
                 }
             }
@@ -861,10 +884,6 @@ class BodyTrackingApp {
             [27, 31], [28, 32]
         ];
         
-        // Scale factor for visualization
-        const scaleFactor = 2;
-        const positionOffset = new THREE.Vector3(0, 0, 0);
-        
         // Create markers for each landmark
         for (let i = 0; i < landmarks.length; i++) {
             const landmark = landmarks[i];
@@ -874,9 +893,9 @@ class BodyTrackingApp {
                 const sphere = new THREE.Mesh(geometry, material);
                 
                 // Position the sphere (adjust mapping to match Three.js coordinate system)
-                sphere.position.x = (landmark.x - 0.5) * scaleFactor + positionOffset.x;
-                sphere.position.y = (0.5 - landmark.y) * scaleFactor + positionOffset.y;
-                sphere.position.z = -landmark.z * scaleFactor + positionOffset.z;
+                sphere.position.x = (landmark.x - 0.5) * 2;
+                sphere.position.y = (0.5 - landmark.y) * 2;
+                sphere.position.z = -landmark.z * 2;
                 
                 this.poseVisualization.add(sphere);
             }
@@ -892,13 +911,13 @@ class BodyTrackingApp {
                 
                 const positionArray = new Float32Array(6);
                 // Start point
-                positionArray[0] = (landmarks[i].x - 0.5) * scaleFactor + positionOffset.x;
-                positionArray[1] = (0.5 - landmarks[i].y) * scaleFactor + positionOffset.y;
-                positionArray[2] = -landmarks[i].z * scaleFactor + positionOffset.z;
+                positionArray[0] = (landmarks[i].x - 0.5) * 2;
+                positionArray[1] = (0.5 - landmarks[i].y) * 2;
+                positionArray[2] = -landmarks[i].z * 2;
                 // End point
-                positionArray[3] = (landmarks[j].x - 0.5) * scaleFactor + positionOffset.x;
-                positionArray[4] = (0.5 - landmarks[j].y) * scaleFactor + positionOffset.y;
-                positionArray[5] = -landmarks[j].z * scaleFactor + positionOffset.z;
+                positionArray[3] = (landmarks[j].x - 0.5) * 2;
+                positionArray[4] = (0.5 - landmarks[j].y) * 2;
+                positionArray[5] = -landmarks[j].z * 2;
                 
                 geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
                 const line = new THREE.Line(geometry, material);
@@ -958,6 +977,11 @@ class BodyTrackingApp {
                 const calibrationLabel = document.createElement('label');
                 calibrationLabel.textContent = 'Head Rotation Calibration';
                 calibrationControl.appendChild(calibrationLabel);
+                
+                const rangeInfo = document.createElement('div');
+                rangeInfo.className = 'range-info';
+                rangeInfo.innerHTML = '<span>Looking Up</span><span>Looking Down</span>';
+                calibrationControl.appendChild(rangeInfo);
                 
                 const headCalibrationSlider = document.createElement('input');
                 headCalibrationSlider.type = 'range';

@@ -132,6 +132,14 @@ button:hover {
     margin-bottom: 8px;
 }
 
+.calibration-control .range-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 3px;
+}
+
 .head-smoothing-control {
     margin-top: 10px;
 }
