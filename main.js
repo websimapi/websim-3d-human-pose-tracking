@@ -128,6 +128,23 @@ class BodyTrackingApp {
                 }
             });
             videoElement.srcObject = stream;
+            
+            // Create canvas overlay for webcam
+            const videoContainer = document.getElementById('video-container');
+            const overlayCanvas = document.createElement('canvas');
+            overlayCanvas.id = 'webcam-overlay';
+            overlayCanvas.width = 640;
+            overlayCanvas.height = 480;
+            overlayCanvas.style.position = 'absolute';
+            overlayCanvas.style.top = '0';
+            overlayCanvas.style.left = '0';
+            overlayCanvas.style.width = '100%';
+            overlayCanvas.style.height = '100%';
+            overlayCanvas.style.pointerEvents = 'none';
+            videoContainer.appendChild(overlayCanvas);
+            
+            this.webcamOverlayContext = overlayCanvas.getContext('2d');
+            
             return new Promise((resolve) => {
                 videoElement.onloadedmetadata = () => {
                     resolve();
@@ -333,6 +350,21 @@ class BodyTrackingApp {
                 this.bones['hips'].position.z = -hipCenter.z * positionScaleFactor;
             }
             
+            // Find the correct spine bones
+            const possibleSpineBones = [
+                ['spine', 'spine1', 'spine2'],
+                ['mixamorigspine', 'mixamorigspine1', 'mixamorigspine2'],
+                ['spine_01', 'spine_02', 'spine_03']
+            ];
+            
+            let spineBones = [];
+            for (const boneSet of possibleSpineBones) {
+                if (this.bones[boneSet[0]]) {
+                    spineBones = boneSet;
+                    break;
+                }
+            }
+            
             // Improved spine and neck rotation with more precise angles
             const spineAngleX = Math.atan2(
                 shoulderCenter.z - hipCenter.z,
@@ -345,7 +377,7 @@ class BodyTrackingApp {
             );
             
             // Apply more aggressive spine rotation for better visual effect
-            ['spine', 'spine1', 'spine2'].forEach((boneName, index) => {
+            spineBones.forEach((boneName, index) => {
                 if (this.bones[boneName]) {
                     // Apply progressive rotation up the spine
                     const factor = 1 + (index * 0.2); // Increase rotation as we go up
@@ -354,8 +386,15 @@ class BodyTrackingApp {
                 }
             });
             
+            // Find shoulder bones
+            const possibleLeftShoulderBones = ['leftshoulder', 'mixamorigleftshoulder', 'left_shoulder', 'shoulder.l'];
+            const possibleRightShoulderBones = ['rightshoulder', 'mixamorigrightshoulder', 'right_shoulder', 'shoulder.r'];
+            
+            const leftShoulderBone = this.findBone(possibleLeftShoulderBones);
+            const rightShoulderBone = this.findBone(possibleRightShoulderBones);
+            
             // Enhanced shoulder rotation with broader range of motion
-            if (this.bones['leftshoulder'] && leftShoulder) {
+            if (leftShoulderBone && leftShoulder) {
                 const leftElbow = landmarks[13];
                 if (leftElbow && leftElbow.visibility > 0.3) {
                     // Calculate vectors for better angle calculation
@@ -370,13 +409,13 @@ class BodyTrackingApp {
                     const rotationY = Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
                     const rotationZ = Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 - Math.PI/2;
                     
-                    this.bones['leftshoulder'].rotation.x = rotationX;
-                    this.bones['leftshoulder'].rotation.y = rotationY;
-                    this.bones['leftshoulder'].rotation.z = rotationZ;
+                    leftShoulderBone.rotation.x = rotationX;
+                    leftShoulderBone.rotation.y = rotationY;
+                    leftShoulderBone.rotation.z = rotationZ;
                 }
             }
             
-            if (this.bones['rightshoulder'] && rightShoulder) {
+            if (rightShoulderBone && rightShoulder) {
                 const rightElbow = landmarks[14];
                 if (rightElbow && rightElbow.visibility > 0.3) {
                     // Calculate vectors for better angle calculation
@@ -391,26 +430,18 @@ class BodyTrackingApp {
                     const rotationY = -Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
                     const rotationZ = -Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 + Math.PI/2;
                     
-                    this.bones['rightshoulder'].rotation.x = rotationX;
-                    this.bones['rightshoulder'].rotation.y = rotationY;
-                    this.bones['rightshoulder'].rotation.z = rotationZ;
+                    rightShoulderBone.rotation.x = rotationX;
+                    rightShoulderBone.rotation.y = rotationY;
+                    rightShoulderBone.rotation.z = rotationZ;
                 }
             }
             
             // Enhanced elbow rotation with improved bend mechanics
             // Look for possible alternative bone names in the model
-            const leftElbowBones = ['leftelbow', 'leftforearm', 'leftarm'];
-            const rightElbowBones = ['rightelbow', 'rightforearm', 'rightarm'];
+            const leftElbowBones = ['leftelbow', 'leftforearm', 'leftarm', 'mixamorigleftarm', 'left_arm', 'arm.l'];
+            const rightElbowBones = ['rightelbow', 'rightforearm', 'rightarm', 'mixamorigrightarm', 'right_arm', 'arm.r'];
             
-            // Function to find the first available bone from a list
-            const findBone = (boneNames) => {
-                for (const name of boneNames) {
-                    if (this.bones[name]) return this.bones[name];
-                }
-                return null;
-            };
-            
-            const leftElbowBone = findBone(leftElbowBones);
+            const leftElbowBone = this.findBone(leftElbowBones);
             const leftElbow = landmarks[13];
             const leftWrist = landmarks[15];
             
@@ -449,7 +480,7 @@ class BodyTrackingApp {
                 ) * 0.5;
             }
             
-            const rightElbowBone = findBone(rightElbowBones);
+            const rightElbowBone = this.findBone(rightElbowBones);
             const rightElbow = landmarks[14];
             const rightWrist = landmarks[16];
             
@@ -491,7 +522,14 @@ class BodyTrackingApp {
             // Enhanced hip and leg rotation with more accurate joint angles
             const legRotationScaleFactor = 2.5; // Increased for better visual results
             
-            if (this.bones['leftupleg']) {
+            // Find possible leg bone names
+            const leftLegBones = ['leftupleg', 'mixamorigleftupleg', 'left_upleg', 'thigh.l'];
+            const rightLegBones = ['rightupleg', 'mixamorigrightupleg', 'right_upleg', 'thigh.r'];
+            
+            const leftUpLegBone = this.findBone(leftLegBones);
+            const rightUpLegBone = this.findBone(rightLegBones);
+            
+            if (leftUpLegBone) {
                 const leftKnee = landmarks[25];
                 if (leftHip && leftKnee && leftHip.visibility > 0.3) {
                     const hipToKnee = {
@@ -501,17 +539,17 @@ class BodyTrackingApp {
                     };
                     
                     // Apply comprehensive leg rotation
-                    this.bones['leftupleg'].rotation.x = 
+                    leftUpLegBone.rotation.x = 
                         Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
-                    this.bones['leftupleg'].rotation.z = 
+                    leftUpLegBone.rotation.z = 
                         Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
                     // Add some hip rotation for better stance
-                    this.bones['leftupleg'].rotation.y = 
+                    leftUpLegBone.rotation.y = 
                         Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
                 }
             }
             
-            if (this.bones['rightupleg']) {
+            if (rightUpLegBone) {
                 const rightKnee = landmarks[26];
                 if (rightHip && rightKnee && rightHip.visibility > 0.3) {
                     const hipToKnee = {
@@ -521,12 +559,12 @@ class BodyTrackingApp {
                     };
                     
                     // Apply comprehensive leg rotation
-                    this.bones['rightupleg'].rotation.x = 
+                    rightUpLegBone.rotation.x = 
                         Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
-                    this.bones['rightupleg'].rotation.z = 
+                    rightUpLegBone.rotation.z = 
                         -Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
                     // Add some hip rotation for better stance
-                    this.bones['rightupleg'].rotation.y = 
+                    rightUpLegBone.rotation.y = 
                         -Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
                 }
             }
@@ -534,7 +572,14 @@ class BodyTrackingApp {
             // Enhanced knee rotation with better bend mechanics
             const kneeRotationFactor = 3.0; // Increased for more visible effect
             
-            if (this.bones['leftleg']) {
+            // Find knee bones
+            const leftKneeBones = ['leftleg', 'mixamorigleftleg', 'left_leg', 'shin.l'];
+            const rightKneeBones = ['rightleg', 'mixamorigrightleg', 'right_leg', 'shin.r'];
+            
+            const leftKneeBone = this.findBone(leftKneeBones);
+            const rightKneeBone = this.findBone(rightKneeBones);
+            
+            if (leftKneeBone) {
                 const leftKnee = landmarks[25];
                 const leftAnkle = landmarks[27];
                 if (leftKnee && leftAnkle && leftKnee.visibility > 0.3) {
@@ -545,11 +590,11 @@ class BodyTrackingApp {
                             Math.cos(Math.atan2(leftKnee.y - leftHip.y, leftKnee.z - leftHip.z))
                         ))
                     );
-                    this.bones['leftleg'].rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
+                    leftKneeBone.rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
                 }
             }
             
-            if (this.bones['rightleg']) {
+            if (rightKneeBone) {
                 const rightKnee = landmarks[26];
                 const rightAnkle = landmarks[28];
                 if (rightKnee && rightAnkle && rightKnee.visibility > 0.3) {
@@ -560,10 +605,51 @@ class BodyTrackingApp {
                             Math.cos(Math.atan2(rightKnee.y - rightHip.y, rightKnee.z - rightHip.z))
                         ))
                     );
-                    this.bones['rightleg'].rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
+                    rightKneeBone.rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
+                }
+            }
+            
+            // Head tracking
+            const possibleHeadBones = ['head', 'mixamorighead', 'neck', 'mixamorigneck', 'neck1', 'mixamorigneck1'];
+            const headBone = this.findBone(possibleHeadBones);
+            
+            if (headBone) {
+                const nose = landmarks[0];
+                const leftEye = landmarks[2];
+                const rightEye = landmarks[5];
+                
+                if (nose && leftEye && rightEye && nose.visibility > 0.5) {
+                    // Calculate face direction vector
+                    const faceCenter = {
+                        x: (leftEye.x + rightEye.x) / 2,
+                        y: (leftEye.y + rightEye.y) / 2,
+                        z: (leftEye.z + rightEye.z) / 2
+                    };
+                    
+                    const faceDirection = {
+                        x: nose.x - faceCenter.x,
+                        y: nose.y - faceCenter.y,
+                        z: nose.z - faceCenter.z
+                    };
+                    
+                    // Apply head rotation
+                    headBone.rotation.y = Math.atan2(faceDirection.x, faceDirection.z) * 2;
+                    headBone.rotation.x = Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2;
                 }
             }
         }
+        
+        // Update webcam overlay
+        this.updateWebcamOverlay(landmarks);
+    }
+    
+    findBone(boneNames) {
+        for (const name of boneNames) {
+            if (this.bones[name.toLowerCase()]) {
+                return this.bones[name.toLowerCase()];
+            }
+        }
+        return null;
     }
 
     addEventListeners() {
@@ -705,6 +791,62 @@ class BodyTrackingApp {
             this.skeletonHelper = new THREE.SkeletonHelper(this.model);
             this.skeletonHelper.visible = true;
             this.scene.add(this.skeletonHelper);
+        }
+    }
+
+    updateWebcamOverlay(landmarks) {
+        if (!landmarks || !this.webcamOverlayContext) return;
+        
+        const canvas = this.webcamOverlayContext.canvas;
+        this.webcamOverlayContext.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Define connections for drawing skeleton
+        const connections = [
+            // Face
+            [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
+            // Torso
+            [11, 12], [11, 23], [12, 24], [23, 24],
+            // Arms
+            [11, 13], [13, 15], [12, 14], [14, 16],
+            // Legs
+            [23, 25], [25, 27], [24, 26], [26, 28],
+            // Hands (simplified)
+            [15, 17], [17, 19], [16, 18], [18, 20],
+            // Feet (simplified)
+            [27, 31], [28, 32]
+        ];
+        
+        // Draw landmarks
+        this.webcamOverlayContext.fillStyle = '#00ff00';
+        for (const landmark of landmarks) {
+            if (landmark.visibility > 0.2) {
+                this.webcamOverlayContext.beginPath();
+                this.webcamOverlayContext.arc(
+                    landmark.x * canvas.width,
+                    landmark.y * canvas.height,
+                    4, 0, 2 * Math.PI
+                );
+                this.webcamOverlayContext.fill();
+            }
+        }
+        
+        // Draw connections
+        this.webcamOverlayContext.strokeStyle = '#ff0000';
+        this.webcamOverlayContext.lineWidth = 2;
+        for (const [i, j] of connections) {
+            if (landmarks[i] && landmarks[j] && 
+                landmarks[i].visibility > 0.2 && landmarks[j].visibility > 0.2) {
+                this.webcamOverlayContext.beginPath();
+                this.webcamOverlayContext.moveTo(
+                    landmarks[i].x * canvas.width,
+                    landmarks[i].y * canvas.height
+                );
+                this.webcamOverlayContext.lineTo(
+                    landmarks[j].x * canvas.width,
+                    landmarks[j].y * canvas.height
+                );
+                this.webcamOverlayContext.stroke();
+            }
         }
     }
 
