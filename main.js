@@ -730,9 +730,11 @@ class BodyTrackingApp {
                             z: nose.z - faceCenter.z
                         };
                         
-                        // Apply head rotation
+                        // Apply head rotation with corrected neutral position
+                        // Adjusting rotation calculation to fix the downward-looking issue
                         headBone.rotation.y = Math.atan2(faceDirection.x, faceDirection.z) * 2;
-                        headBone.rotation.x = Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2;
+                        // Adding offset to correct the default downward position
+                        headBone.rotation.x = (Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2) - 0.3;
                     }
                 }
             }
