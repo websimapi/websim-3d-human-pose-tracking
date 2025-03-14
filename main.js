@@ -26,6 +26,12 @@ class BodyTrackingApp {
         this.skeletonHelper = null;
         this.poseVisualization = null;
         
+        // Calibration variables
+        this.isCalibrating = false;
+        this.calibrationData = null;
+        this.calibrationCountdown = 0;
+        this.calibrationMessage = null;
+        
         this.init();
     }
 
@@ -317,13 +323,17 @@ class BodyTrackingApp {
         // Update pose visualization
         this.updatePoseVisualization(landmarks);
         
-        // Enhanced mapping between MediaPipe landmarks and model bones
+        // Apply calibration if available
+        let adjustedLandmarks = landmarks;
+        if (this.calibrationData) {
+            adjustedLandmarks = this.applyCalibration(landmarks);
+        }
         
         // Calculate torso orientation
-        const leftShoulder = landmarks[11];
-        const rightShoulder = landmarks[12];
-        const leftHip = landmarks[23];
-        const rightHip = landmarks[24];
+        const leftShoulder = adjustedLandmarks[11];
+        const rightShoulder = adjustedLandmarks[12];
+        const leftHip = adjustedLandmarks[23];
+        const rightHip = adjustedLandmarks[24];
         
         if (leftShoulder && rightShoulder && leftHip && rightHip) {
             // Calculate mid points
@@ -395,7 +405,7 @@ class BodyTrackingApp {
             
             // Enhanced shoulder rotation with broader range of motion
             if (leftShoulderBone && leftShoulder) {
-                const leftElbow = landmarks[13];
+                const leftElbow = adjustedLandmarks[13];
                 if (leftElbow && leftElbow.visibility > 0.3) {
                     // Calculate vectors for better angle calculation
                     const shoulderToElbow = {
@@ -416,7 +426,7 @@ class BodyTrackingApp {
             }
             
             if (rightShoulderBone && rightShoulder) {
-                const rightElbow = landmarks[14];
+                const rightElbow = adjustedLandmarks[14];
                 if (rightElbow && rightElbow.visibility > 0.3) {
                     // Calculate vectors for better angle calculation
                     const shoulderToElbow = {
@@ -442,8 +452,8 @@ class BodyTrackingApp {
             const rightElbowBones = ['rightelbow', 'rightforearm', 'rightarm', 'mixamorigrightarm', 'right_arm', 'arm.r'];
             
             const leftElbowBone = this.findBone(leftElbowBones);
-            const leftElbow = landmarks[13];
-            const leftWrist = landmarks[15];
+            const leftElbow = adjustedLandmarks[13];
+            const leftWrist = adjustedLandmarks[15];
             
             if (leftElbowBone && leftElbow && leftWrist && leftElbow.visibility > 0.3) {
                 // Calculate arm bend angle with improved mechanics
@@ -481,8 +491,8 @@ class BodyTrackingApp {
             }
             
             const rightElbowBone = this.findBone(rightElbowBones);
-            const rightElbow = landmarks[14];
-            const rightWrist = landmarks[16];
+            const rightElbow = adjustedLandmarks[14];
+            const rightWrist = adjustedLandmarks[16];
             
             if (rightElbowBone && rightElbow && rightWrist && rightElbow.visibility > 0.3) {
                 // Calculate arm bend angle with improved mechanics
@@ -530,7 +540,7 @@ class BodyTrackingApp {
             const rightUpLegBone = this.findBone(rightLegBones);
             
             if (leftUpLegBone) {
-                const leftKnee = landmarks[25];
+                const leftKnee = adjustedLandmarks[25];
                 if (leftHip && leftKnee && leftHip.visibility > 0.3) {
                     const hipToKnee = {
                         x: leftKnee.x - leftHip.x,
@@ -550,7 +560,7 @@ class BodyTrackingApp {
             }
             
             if (rightUpLegBone) {
-                const rightKnee = landmarks[26];
+                const rightKnee = adjustedLandmarks[26];
                 if (rightHip && rightKnee && rightHip.visibility > 0.3) {
                     const hipToKnee = {
                         x: rightKnee.x - rightHip.x,
@@ -580,8 +590,8 @@ class BodyTrackingApp {
             const rightKneeBone = this.findBone(rightKneeBones);
             
             if (leftKneeBone) {
-                const leftKnee = landmarks[25];
-                const leftAnkle = landmarks[27];
+                const leftKnee = adjustedLandmarks[25];
+                const leftAnkle = adjustedLandmarks[27];
                 if (leftKnee && leftAnkle && leftKnee.visibility > 0.3) {
                     // Calculate knee bend angle
                     const kneeAngle = Math.PI - Math.acos(
@@ -595,8 +605,8 @@ class BodyTrackingApp {
             }
             
             if (rightKneeBone) {
-                const rightKnee = landmarks[26];
-                const rightAnkle = landmarks[28];
+                const rightKnee = adjustedLandmarks[26];
+                const rightAnkle = adjustedLandmarks[28];
                 if (rightKnee && rightAnkle && rightKnee.visibility > 0.3) {
                     // Calculate knee bend angle
                     const kneeAngle = Math.PI - Math.acos(
@@ -614,9 +624,9 @@ class BodyTrackingApp {
             const headBone = this.findBone(possibleHeadBones);
             
             if (headBone) {
-                const nose = landmarks[0];
-                const leftEye = landmarks[2];
-                const rightEye = landmarks[5];
+                const nose = adjustedLandmarks[0];
+                const leftEye = adjustedLandmarks[2];
+                const rightEye = adjustedLandmarks[5];
                 
                 if (nose && leftEye && rightEye && nose.visibility > 0.5) {
                     // Calculate face direction vector
@@ -660,9 +670,15 @@ class BodyTrackingApp {
         document.getElementById('toggle-video').addEventListener('click', () => {
             this.toggleVideo();
         });
+        
+        document.getElementById('calibrate').addEventListener('click', () => {
+            this.startCalibration();
+        });
     }
 
     toggleTracking() {
+        if (this.isCalibrating) return; // Don't start tracking during calibration
+        
         this.isTracking = !this.isTracking;
         const button = document.getElementById('start-tracking');
         
@@ -848,6 +864,146 @@ class BodyTrackingApp {
                 this.webcamOverlayContext.stroke();
             }
         }
+    }
+
+    startCalibration() {
+        if (this.isTracking) this.toggleTracking(); // Stop tracking first
+        
+        this.isCalibrating = true;
+        this.calibrationCountdown = 5; // 5 seconds countdown
+        
+        // Create calibration message element if it doesn't exist
+        if (!this.calibrationMessage) {
+            this.calibrationMessage = document.createElement('div');
+            this.calibrationMessage.style.position = 'absolute';
+            this.calibrationMessage.style.top = '50%';
+            this.calibrationMessage.style.left = '50%';
+            this.calibrationMessage.style.transform = 'translate(-50%, -50%)';
+            this.calibrationMessage.style.fontSize = '36px';
+            this.calibrationMessage.style.color = 'white';
+            this.calibrationMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            this.calibrationMessage.style.padding = '20px';
+            this.calibrationMessage.style.borderRadius = '10px';
+            this.calibrationMessage.style.zIndex = '100';
+            document.body.appendChild(this.calibrationMessage);
+        }
+        
+        this.updateDebugInfo('Calibration: Stand in T-pose');
+        this.calibrationMessage.style.display = 'block';
+        this.calibrationMessage.textContent = `Stand in T-pose! Calibrating in ${this.calibrationCountdown}`;
+        
+        // Start calibration process
+        this.calibrationInterval = setInterval(() => this.updateCalibration(), 1000);
+        
+        // Make sure video is visible during calibration
+        if (!this.videoVisible) this.toggleVideo();
+    }
+    
+    updateCalibration() {
+        this.calibrationCountdown--;
+        
+        if (this.calibrationCountdown > 0) {
+            // Update countdown message
+            this.calibrationMessage.textContent = `Stand in T-pose! Calibrating in ${this.calibrationCountdown}`;
+        } else {
+            // Capture calibration data
+            clearInterval(this.calibrationInterval);
+            this.captureCalibrationData();
+        }
+    }
+    
+    async captureCalibrationData() {
+        this.calibrationMessage.textContent = "Processing... Hold your pose!";
+        
+        try {
+            const videoElement = document.getElementById('webcam');
+            
+            // Get a single pose detection for calibration
+            await this.poseDetector.send({image: videoElement});
+            
+            // Wait a moment to ensure we have landmarks
+            setTimeout(() => {
+                if (this.lastValidLandmarks) {
+                    this.calibrationData = JSON.parse(JSON.stringify(this.lastValidLandmarks));
+                    this.finishCalibration();
+                } else {
+                    this.calibrationMessage.textContent = "Calibration failed! Try again.";
+                    setTimeout(() => {
+                        this.isCalibrating = false;
+                        this.calibrationMessage.style.display = 'none';
+                    }, 2000);
+                }
+            }, 500);
+        } catch (error) {
+            console.error('Calibration error:', error);
+            this.calibrationMessage.textContent = "Calibration error! Try again.";
+            setTimeout(() => {
+                this.isCalibrating = false;
+                this.calibrationMessage.style.display = 'none';
+            }, 2000);
+        }
+    }
+    
+    finishCalibration() {
+        this.calibrationMessage.textContent = "Calibration complete!";
+        setTimeout(() => {
+            this.isCalibrating = false;
+            this.calibrationMessage.style.display = 'none';
+            this.updateDebugInfo('Calibration complete. Ready to track!');
+            
+            // Auto-start tracking after calibration
+            if (!this.isTracking) {
+                this.toggleTracking();
+            }
+        }, 1000);
+    }
+    
+    applyCalibration(landmarks) {
+        if (!this.calibrationData) return landmarks;
+        
+        const adjustedLandmarks = JSON.parse(JSON.stringify(landmarks));
+        
+        // Get calibration references - ideal T-pose has arms straight out
+        const calibLeftShoulder = this.calibrationData[11];
+        const calibRightShoulder = this.calibrationData[12];
+        const calibLeftHip = this.calibrationData[23];
+        const calibRightHip = this.calibrationData[24];
+        
+        // Calculate calibration center and rotation
+        const calibTorsoCenter = {
+            x: (calibLeftShoulder.x + calibRightShoulder.x + calibLeftHip.x + calibRightHip.x) / 4,
+            y: (calibLeftShoulder.y + calibRightShoulder.y + calibLeftHip.y + calibRightHip.y) / 4,
+            z: (calibLeftShoulder.z + calibRightShoulder.z + calibLeftHip.z + calibRightHip.z) / 4
+        };
+        
+        // Calculate calibration angles
+        const calibTorsoAngle = Math.atan2(
+            calibRightShoulder.x - calibLeftShoulder.x,
+            calibRightShoulder.y - calibLeftShoulder.y
+        );
+        
+        // Fix hand orientation issues - if we detected that hands are inverted during calibration
+        const leftHandInverted = calibLeftShoulder.x > calibRightShoulder.x;
+        
+        // Apply adjustments to each landmark
+        for (let i = 0; i < adjustedLandmarks.length; i++) {
+            // Center adjustment (remove calibration center offset)
+            adjustedLandmarks[i].x -= (calibTorsoCenter.x - 0.5);
+            
+            // Fix mirroring issues for left/right sides
+            if (leftHandInverted) {
+                // Swap left and right for specific landmarks if needed
+                if ([11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31].includes(i)) {
+                    // Left side landmarks
+                    adjustedLandmarks[i].x = 1 - adjustedLandmarks[i].x;
+                } else if ([12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32].includes(i)) {
+                    // Right side landmarks
+                    adjustedLandmarks[i].x = 1 - adjustedLandmarks[i].x;
+                }
+            }
+        }
+        
+        return adjustedLandmarks;
     }
 
 }
