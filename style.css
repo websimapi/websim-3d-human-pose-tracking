@@ -113,6 +113,35 @@ button:hover {
     padding-bottom: 5px;
 }
 
+.calibration-control {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #333;
+    border-radius: 4px;
+}
+
+.calibration-control label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #ff9900;
+}
+
+.calibration-control input {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+.head-smoothing-control {
+    margin-top: 10px;
+}
+
+.calibration-value {
+    text-align: center;
+    font-size: 12px;
+    color: #aaa;
+}
+
 .toggle-container {
     display: flex;
     align-items: center;

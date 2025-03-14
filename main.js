@@ -38,6 +38,10 @@ class BodyTrackingApp {
         // Default pose data for when body parts are out of scene
         this.defaultPose = null;
         
+        // Add smoothing for head rotation
+        this.headRotationHistory = [];
+        this.headSmoothingFactor = 0.5;
+        
         this.init();
     }
 
@@ -730,11 +734,28 @@ class BodyTrackingApp {
                             z: nose.z - faceCenter.z
                         };
                         
-                        // Apply head rotation with corrected neutral position
-                        // Adjusting rotation calculation to fix the downward-looking issue
-                        headBone.rotation.y = Math.atan2(faceDirection.x, faceDirection.z) * 2;
-                        // Adding offset to correct the default downward position
-                        headBone.rotation.x = (Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2) - 0.3;
+                        // Calculate rotations
+                        let rotY = Math.atan2(faceDirection.x, faceDirection.z) * 2;
+                        const calibrationValue = this.headCalibrationValue || -3.0;
+                        let rotX = (Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2) + calibrationValue;
+                        
+                        // Apply smoothing using moving average
+                        this.headRotationHistory.push({x: rotX, y: rotY});
+                        if (this.headRotationHistory.length > 10) {
+                            this.headRotationHistory.shift();
+                        }
+                        
+                        let smoothX = 0, smoothY = 0;
+                        for (let i = 0; i < this.headRotationHistory.length; i++) {
+                            // Apply more weight to recent positions
+                            const weight = (i + 1) / ((this.headRotationHistory.length * (this.headRotationHistory.length + 1)) / 2);
+                            smoothX += this.headRotationHistory[i].x * weight;
+                            smoothY += this.headRotationHistory[i].y * weight;
+                        }
+                        
+                        // Apply final smoothed rotation
+                        headBone.rotation.y = smoothY;
+                        headBone.rotation.x = smoothX;
                     }
                 }
             }
@@ -928,6 +949,73 @@ class BodyTrackingApp {
             toggle.appendChild(checkbox);
             toggle.appendChild(label);
             debugPanel.appendChild(toggle);
+            
+            // Add calibration control for head tracking
+            if (part === 'head') {
+                const calibrationControl = document.createElement('div');
+                calibrationControl.className = 'calibration-control';
+                
+                const calibrationLabel = document.createElement('label');
+                calibrationLabel.textContent = 'Head Rotation Calibration';
+                calibrationControl.appendChild(calibrationLabel);
+                
+                const headCalibrationSlider = document.createElement('input');
+                headCalibrationSlider.type = 'range';
+                headCalibrationSlider.min = '-5';
+                headCalibrationSlider.max = '2';
+                headCalibrationSlider.step = '0.1';
+                headCalibrationSlider.value = '-3.0';
+                
+                const valueDisplay = document.createElement('div');
+                valueDisplay.className = 'calibration-value';
+                valueDisplay.textContent = 'Value: -3.0';
+                
+                headCalibrationSlider.addEventListener('input', (e) => {
+                    const calibrationValue = parseFloat(e.target.value);
+                    valueDisplay.textContent = `Value: ${calibrationValue}`;
+                    
+                    this.headCalibrationValue = calibrationValue;
+                    this.updateDebugInfo(`Head calibration set to: ${calibrationValue}`);
+                });
+                
+                calibrationControl.appendChild(headCalibrationSlider);
+                calibrationControl.appendChild(valueDisplay);
+                debugPanel.appendChild(calibrationControl);
+                
+                // Add smoothing control for head motion
+                const smoothingControl = document.createElement('div');
+                smoothingControl.className = 'calibration-control head-smoothing-control';
+                
+                const smoothingLabel = document.createElement('label');
+                smoothingLabel.textContent = 'Head Motion Smoothing';
+                smoothingControl.appendChild(smoothingLabel);
+                
+                const smoothingSlider = document.createElement('input');
+                smoothingSlider.type = 'range';
+                smoothingSlider.min = '0';
+                smoothingSlider.max = '1';
+                smoothingSlider.step = '0.05';
+                smoothingSlider.value = '0.5';
+                
+                const smoothingDisplay = document.createElement('div');
+                smoothingDisplay.className = 'calibration-value';
+                smoothingDisplay.textContent = 'Value: 0.5';
+                
+                smoothingSlider.addEventListener('input', (e) => {
+                    const smoothingValue = parseFloat(e.target.value);
+                    smoothingDisplay.textContent = `Value: ${smoothingValue}`;
+                    this.headSmoothingFactor = smoothingValue;
+                    this.updateDebugInfo(`Head smoothing set to: ${smoothingValue}`);
+                    
+                    this.headRotationHistory = [];
+                });
+                
+                smoothingControl.appendChild(smoothingSlider);
+                smoothingControl.appendChild(smoothingDisplay);
+                debugPanel.appendChild(smoothingControl);
+                
+                this.headCalibrationValue = -3.0;
+            }
         });
         
         // Add a button to capture default pose
