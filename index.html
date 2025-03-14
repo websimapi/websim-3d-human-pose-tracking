@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Human Pose Tracking</title>
+    <title>Advanced Human Motion Tracking</title>
     <link rel="stylesheet" href="style.css">
     <script type="importmap">
         {
@@ -12,23 +12,35 @@
             }
         }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+    <!-- MediaPipe libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div class="container">
         <div id="scene-container"></div>
         <div id="video-container">
             <video id="webcam" autoplay playsinline></video>
+            <canvas id="webcam-overlay"></canvas>
         </div>
         <div class="controls">
             <button id="start-tracking">Start Tracking</button>
             <button id="toggle-video">Toggle Video</button>
+            <button id="reset-pose">Reset Pose</button>
+            <button id="toggle-debug">Toggle Debug</button>
         </div>
         <div class="debug-info" id="debug-info">Tracking status: Inactive</div>
-        <div class="key-instructions">Press 'S' to toggle skeleton visualization</div>
+        <div class="key-instructions">
+            <div>Press 'S' to toggle skeleton visualization</div>
+            <div>Press 'D' to toggle debug panel</div>
+            <div>Press 'R' to reset pose</div>
+        </div>
     </div>
     <div id="loading">Loading model and resources...</div>
-    <script type="module" src="main.js"></script>
+    <script type="module" src="app.js"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
