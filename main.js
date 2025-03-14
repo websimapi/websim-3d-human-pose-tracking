@@ -18,6 +18,9 @@ class BodyTrackingApp {
         this.videoVisible = true;
         this.poseDetector = null;
         this.loadingElement = document.getElementById('loading');
+        this.debugElement = document.getElementById('debug-info');
+        this.lastValidLandmarks = null;
+        this.trackingTolerance = 0.5; // Tolerance for landmark visibility
         
         this.init();
     }
@@ -184,14 +187,14 @@ class BodyTrackingApp {
 
     async initPoseDetector() {
         try {
-            // Use the correct MediaPipe Pose API initialization
-            this.poseDetector = new window.Pose({
+            // Create a proper MediaPipe Pose detector
+            const pose = new window.Pose({
                 locateFile: (file) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
                 }
             });
             
-            this.poseDetector.setOptions({
+            pose.setOptions({
                 modelComplexity: 1,
                 smoothLandmarks: true,
                 enableSegmentation: false,
@@ -200,43 +203,55 @@ class BodyTrackingApp {
                 minTrackingConfidence: 0.5
             });
             
+            this.poseDetector = pose;
+            
             this.poseDetector.onResults((results) => {
                 if (results.poseLandmarks) {
-                    this.updateModelPose(results.poseLandmarks);
+                    this.updateDebugInfo('Tracking status: Active');
+                    this.lastValidLandmarks = this.processLandmarks(results.poseLandmarks);
+                    this.updateModelPose(this.lastValidLandmarks);
+                } else {
+                    this.updateDebugInfo('Tracking status: No landmarks detected');
+                    if (this.lastValidLandmarks) {
+                        // Use last known positions with slight decay for natural movement
+                        this.updateModelPose(this.lastValidLandmarks);
+                    }
                 }
             });
         } catch (error) {
             console.error('Error initializing pose detector:', error);
+            this.updateDebugInfo('Tracking status: Error initializing pose detector');
             alert('Failed to initialize pose tracking. Please make sure you have a compatible browser and try again.');
         }
     }
 
-    addEventListeners() {
-        document.getElementById('start-tracking').addEventListener('click', () => {
-            this.toggleTracking();
-        });
-        
-        document.getElementById('toggle-video').addEventListener('click', () => {
-            this.toggleVideo();
-        });
-    }
-
-    toggleTracking() {
-        this.isTracking = !this.isTracking;
-        const button = document.getElementById('start-tracking');
-        
-        if (this.isTracking) {
-            button.textContent = 'Stop Tracking';
-            this.startPoseDetection();
-        } else {
-            button.textContent = 'Start Tracking';
+    updateDebugInfo(message) {
+        if (this.debugElement) {
+            this.debugElement.textContent = message;
         }
     }
 
-    toggleVideo() {
-        this.videoVisible = !this.videoVisible;
-        const videoContainer = document.getElementById('video-container');
-        videoContainer.style.display = this.videoVisible ? 'block' : 'none';
+    processLandmarks(landmarks) {
+        // Deep copy the landmarks to avoid reference issues
+        const processedLandmarks = JSON.parse(JSON.stringify(landmarks));
+        
+        // Process landmarks to handle visibility and improve tracking
+        for (let i = 0; i < processedLandmarks.length; i++) {
+            const landmark = processedLandmarks[i];
+            
+            // If a landmark has low visibility but we have previous data
+            if (landmark.visibility < this.trackingTolerance && this.lastValidLandmarks && this.lastValidLandmarks[i]) {
+                // Blend with the last known position for smooth transition
+                const blendFactor = 0.85; // How much we rely on previous position
+                landmark.x = landmark.x * (1 - blendFactor) + this.lastValidLandmarks[i].x * blendFactor;
+                landmark.y = landmark.y * (1 - blendFactor) + this.lastValidLandmarks[i].y * blendFactor;
+                landmark.z = landmark.z * (1 - blendFactor) + this.lastValidLandmarks[i].z * blendFactor;
+                // Increase visibility artificially for pose calculations
+                landmark.visibility = Math.min(this.trackingTolerance, landmark.visibility + 0.2);
+            }
+        }
+        
+        return processedLandmarks;
     }
 
     async startPoseDetection() {
@@ -245,10 +260,11 @@ class BodyTrackingApp {
         const videoElement = document.getElementById('webcam');
         
         try {
-            // Use the correct method to process frames
+            // Correctly process frames with MediaPipe
             await this.poseDetector.send({image: videoElement});
         } catch (error) {
             console.error('Error in pose detection:', error);
+            this.updateDebugInfo('Tracking status: Error during detection');
         }
         
         if (this.isTracking) {
@@ -280,9 +296,6 @@ class BodyTrackingApp {
                 y: (leftHip.y + rightHip.y) / 2,
                 z: (leftHip.z + rightHip.z) / 2
             };
-            
-            // Debug visualization
-            console.log("Tracking active, landmarks detected:", landmarks.length);
             
             // Update root bone position based on hip center
             if (this.bones['hips']) {
@@ -430,7 +443,147 @@ class BodyTrackingApp {
                     this.bones['rightleg'].rotation.x = -Math.abs(kneeAngle) * 2;
                 }
             }
+            
+            // Handle wrist and hand tracking
+            if (this.bones['lefthand'] || this.bones['leftwrist']) {
+                const leftWrist = landmarks[15];
+                const leftIndex = landmarks[19]; // Index finger MCP joint
+                if (leftWrist && leftIndex && leftWrist.visibility > 0.3) {
+                    const targetBone = this.bones['lefthand'] || this.bones['leftwrist'];
+                    // Calculate wrist flexion/extension
+                    const wristAngleX = Math.atan2(
+                        leftIndex.z - leftWrist.z,
+                        leftIndex.y - leftWrist.y
+                    );
+                    // Calculate wrist rotation
+                    const wristAngleY = Math.atan2(
+                        leftIndex.x - leftWrist.x,
+                        leftIndex.z - leftWrist.z
+                    );
+                    
+                    targetBone.rotation.x = wristAngleX;
+                    targetBone.rotation.y = wristAngleY;
+                }
+            }
+            
+            if (this.bones['righthand'] || this.bones['rightwrist']) {
+                const rightWrist = landmarks[16];
+                const rightIndex = landmarks[20]; // Index finger MCP joint
+                if (rightWrist && rightIndex && rightWrist.visibility > 0.3) {
+                    const targetBone = this.bones['righthand'] || this.bones['rightwrist'];
+                    // Calculate wrist flexion/extension
+                    const wristAngleX = Math.atan2(
+                        rightIndex.z - rightWrist.z,
+                        rightIndex.y - rightWrist.y
+                    );
+                    // Calculate wrist rotation
+                    const wristAngleY = -Math.atan2(
+                        rightIndex.x - rightWrist.x,
+                        rightIndex.z - rightWrist.z
+                    );
+                    
+                    targetBone.rotation.x = wristAngleX;
+                    targetBone.rotation.y = wristAngleY;
+                }
+            }
+            
+            // Handle neck and head tracking
+            const nose = landmarks[0];
+            const leftEar = landmarks[7];
+            const rightEar = landmarks[8];
+            
+            if (nose && leftEar && rightEar && 
+                (this.bones['neck'] || this.bones['head'])) {
+                const targetBone = this.bones['neck'] || this.bones['head'];
+                
+                // Calculate head center
+                const headCenter = {
+                    x: (leftEar.x + rightEar.x) / 2,
+                    y: (leftEar.y + rightEar.y) / 2,
+                    z: (leftEar.z + rightEar.z) / 2
+                };
+                
+                // Calculate neck to nose vector for head orientation
+                const neckToNose = {
+                    x: nose.x - shoulderCenter.x,
+                    y: nose.y - shoulderCenter.y,
+                    z: nose.z - shoulderCenter.z
+                };
+                
+                // Calculate head rotation angles
+                const headTilt = Math.atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x);
+                const headNod = Math.atan2(neckToNose.z, neckToNose.y);
+                const headTurn = Math.atan2(neckToNose.x, neckToNose.z);
+                
+                // Apply head rotations
+                targetBone.rotation.z = headTilt;
+                targetBone.rotation.x = headNod;
+                targetBone.rotation.y = headTurn;
+            }
+            
+            // Handle ankle and foot tracking
+            if (this.bones['leftfoot'] || this.bones['leftankle']) {
+                const leftAnkle = landmarks[27];
+                const leftFoot = landmarks[31]; // Left foot index
+                
+                if (leftAnkle && leftFoot && leftAnkle.visibility > 0.3) {
+                    const targetBone = this.bones['leftfoot'] || this.bones['leftankle'];
+                    // Calculate ankle angle
+                    const ankleAngleX = Math.atan2(
+                        leftFoot.z - leftAnkle.z,
+                        leftFoot.y - leftAnkle.y
+                    );
+                    
+                    targetBone.rotation.x = ankleAngleX;
+                }
+            }
+            
+            if (this.bones['rightfoot'] || this.bones['rightankle']) {
+                const rightAnkle = landmarks[28];
+                const rightFoot = landmarks[32]; // Right foot index
+                
+                if (rightAnkle && rightFoot && rightAnkle.visibility > 0.3) {
+                    const targetBone = this.bones['rightfoot'] || this.bones['rightankle'];
+                    // Calculate ankle angle
+                    const ankleAngleX = Math.atan2(
+                        rightFoot.z - rightAnkle.z,
+                        rightFoot.y - rightAnkle.y
+                    );
+                    
+                    targetBone.rotation.x = ankleAngleX;
+                }
+            }
         }
+    }
+
+    addEventListeners() {
+        document.getElementById('start-tracking').addEventListener('click', () => {
+            this.toggleTracking();
+        });
+        
+        document.getElementById('toggle-video').addEventListener('click', () => {
+            this.toggleVideo();
+        });
+    }
+
+    toggleTracking() {
+        this.isTracking = !this.isTracking;
+        const button = document.getElementById('start-tracking');
+        
+        if (this.isTracking) {
+            button.textContent = 'Stop Tracking';
+            this.updateDebugInfo('Tracking status: Starting...');
+            this.startPoseDetection();
+        } else {
+            button.textContent = 'Start Tracking';
+            this.updateDebugInfo('Tracking status: Inactive');
+        }
+    }
+
+    toggleVideo() {
+        this.videoVisible = !this.videoVisible;
+        const videoContainer = document.getElementById('video-container');
+        videoContainer.style.display = this.videoVisible ? 'block' : 'none';
     }
 
     animate() {
