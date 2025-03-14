@@ -183,28 +183,32 @@ class BodyTrackingApp {
     }
 
     async initPoseDetector() {
-        const pose = new window.Pose({
-            locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
-            }
-        });
-        
-        pose.setOptions({
-            modelComplexity: 1,
-            smoothLandmarks: true,
-            enableSegmentation: false,
-            smoothSegmentation: false,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
-        
-        pose.onResults((results) => {
-            if (results.poseLandmarks) {
-                this.updateModelPose(results.poseLandmarks);
-            }
-        });
-        
-        this.poseDetector = pose;
+        try {
+            // Use the correct MediaPipe Pose API initialization
+            this.poseDetector = new window.Pose({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                }
+            });
+            
+            this.poseDetector.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                enableSegmentation: false,
+                smoothSegmentation: false,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            this.poseDetector.onResults((results) => {
+                if (results.poseLandmarks) {
+                    this.updateModelPose(results.poseLandmarks);
+                }
+            });
+        } catch (error) {
+            console.error('Error initializing pose detector:', error);
+            alert('Failed to initialize pose tracking. Please make sure you have a compatible browser and try again.');
+        }
     }
 
     addEventListeners() {
@@ -241,7 +245,8 @@ class BodyTrackingApp {
         const videoElement = document.getElementById('webcam');
         
         try {
-            await this.poseDetector.send({ image: videoElement });
+            // Use the correct method to process frames
+            await this.poseDetector.send({image: videoElement});
         } catch (error) {
             console.error('Error in pose detection:', error);
         }
@@ -254,17 +259,16 @@ class BodyTrackingApp {
     updateModelPose(landmarks) {
         if (!this.skeleton || !landmarks) return;
         
-        // MediaPipe landmarks to Three.js bone mapping
-        // This is a simplified mapping, adjust based on your model's skeleton
+        // Enhanced mapping between MediaPipe landmarks and model bones
         
-        // Calculate torso rotation (based on shoulders)
+        // Calculate torso orientation
         const leftShoulder = landmarks[11];
         const rightShoulder = landmarks[12];
         const leftHip = landmarks[23];
         const rightHip = landmarks[24];
         
         if (leftShoulder && rightShoulder && leftHip && rightHip) {
-            // Calculate spine orientation
+            // Calculate mid points
             const shoulderCenter = {
                 x: (leftShoulder.x + rightShoulder.x) / 2,
                 y: (leftShoulder.y + rightShoulder.y) / 2,
@@ -277,42 +281,76 @@ class BodyTrackingApp {
                 z: (leftHip.z + rightHip.z) / 2
             };
             
-            // Map spine bones if they exist
-            if (this.bones['spine'] || this.bones['spine1'] || this.bones['spine2']) {
-                const spineAngle = Math.atan2(
-                    shoulderCenter.z - hipCenter.z,
-                    shoulderCenter.y - hipCenter.y
-                );
-                
-                const spineBones = ['spine', 'spine1', 'spine2'].filter(name => this.bones[name]);
-                spineBones.forEach(bone => {
-                    if (this.bones[bone]) {
-                        this.bones[bone].rotation.x = spineAngle - Math.PI/2;
-                    }
-                });
+            // Debug visualization
+            console.log("Tracking active, landmarks detected:", landmarks.length);
+            
+            // Update root bone position based on hip center
+            if (this.bones['hips']) {
+                // Adjust the scaling factor as needed for your model
+                const positionScaleFactor = 2;
+                this.bones['hips'].position.x = (hipCenter.x - 0.5) * positionScaleFactor;
+                // Y is up in Three.js, but MediaPipe y increases downward
+                this.bones['hips'].position.y = (0.5 - hipCenter.y) * positionScaleFactor;
             }
             
-            // Handle shoulder rotation
+            // Handle spine and neck rotation
+            const spineAngleX = Math.atan2(
+                shoulderCenter.z - hipCenter.z,
+                shoulderCenter.y - hipCenter.y
+            );
+            
+            const spineAngleZ = Math.atan2(
+                shoulderCenter.x - hipCenter.x,
+                shoulderCenter.y - hipCenter.y
+            );
+            
+            ['spine', 'spine1', 'spine2'].forEach(boneName => {
+                if (this.bones[boneName]) {
+                    this.bones[boneName].rotation.x = spineAngleX;
+                    this.bones[boneName].rotation.z = spineAngleZ;
+                }
+            });
+            
+            // Enhanced shoulder rotation
             if (this.bones['leftshoulder'] && leftShoulder) {
-                const leftShoulderAngle = this.calculateJointAngle(leftShoulder, landmarks[13]); // left elbow
-                this.bones['leftshoulder'].rotation.z = leftShoulderAngle.z;
-                this.bones['leftshoulder'].rotation.y = leftShoulderAngle.y;
+                const leftElbow = landmarks[13];
+                if (leftElbow) {
+                    this.bones['leftshoulder'].rotation.x = 
+                        Math.atan2(leftElbow.z - leftShoulder.z, leftElbow.y - leftShoulder.y);
+                    this.bones['leftshoulder'].rotation.y = 
+                        Math.atan2(leftElbow.x - leftShoulder.x, leftElbow.z - leftShoulder.z);
+                    this.bones['leftshoulder'].rotation.z = 
+                        Math.atan2(leftElbow.y - leftShoulder.y, leftElbow.x - leftShoulder.x) - Math.PI/2;
+                }
             }
             
             if (this.bones['rightshoulder'] && rightShoulder) {
-                const rightShoulderAngle = this.calculateJointAngle(rightShoulder, landmarks[14]); // right elbow
-                this.bones['rightshoulder'].rotation.z = -rightShoulderAngle.z;
-                this.bones['rightshoulder'].rotation.y = -rightShoulderAngle.y;
+                const rightElbow = landmarks[14];
+                if (rightElbow) {
+                    this.bones['rightshoulder'].rotation.x = 
+                        Math.atan2(rightElbow.z - rightShoulder.z, rightElbow.y - rightShoulder.y);
+                    this.bones['rightshoulder'].rotation.y = 
+                        -Math.atan2(rightElbow.x - rightShoulder.x, rightElbow.z - rightShoulder.z);
+                    this.bones['rightshoulder'].rotation.z = 
+                        -Math.atan2(rightElbow.y - rightShoulder.y, rightElbow.x - rightShoulder.x) + Math.PI/2;
+                }
             }
             
-            // Handle elbow rotation
+            // Enhanced elbow rotation
             if (this.bones['leftelbow'] || this.bones['leftforearm']) {
                 const leftElbow = landmarks[13];
                 const leftWrist = landmarks[15];
                 if (leftElbow && leftWrist) {
-                    const leftElbowAngle = this.calculateJointAngle(leftElbow, leftWrist);
                     const targetBone = this.bones['leftelbow'] || this.bones['leftforearm'];
-                    targetBone.rotation.z = leftElbowAngle.z;
+                    // Calculate angle between upper arm and forearm
+                    const angle = Math.atan2(
+                        leftWrist.y - leftElbow.y,
+                        leftWrist.x - leftElbow.x
+                    ) - Math.atan2(
+                        leftElbow.y - leftShoulder.y,
+                        leftElbow.x - leftShoulder.x
+                    );
+                    targetBone.rotation.z = angle;
                 }
             }
             
@@ -320,68 +358,79 @@ class BodyTrackingApp {
                 const rightElbow = landmarks[14];
                 const rightWrist = landmarks[16];
                 if (rightElbow && rightWrist) {
-                    const rightElbowAngle = this.calculateJointAngle(rightElbow, rightWrist);
                     const targetBone = this.bones['rightelbow'] || this.bones['rightforearm'];
-                    targetBone.rotation.z = -rightElbowAngle.z;
+                    // Calculate angle between upper arm and forearm
+                    const angle = Math.atan2(
+                        rightWrist.y - rightElbow.y,
+                        rightWrist.x - rightElbow.x
+                    ) - Math.atan2(
+                        rightElbow.y - rightShoulder.y,
+                        rightElbow.x - rightShoulder.x
+                    );
+                    targetBone.rotation.z = -angle;
                 }
             }
             
-            // Handle hip rotation
-            if (this.bones['lefthip'] || this.bones['leftupleg']) {
-                const leftHipBone = this.bones['lefthip'] || this.bones['leftupleg'];
+            // Enhanced hip rotation with better leg tracking
+            const legRotationScaleFactor = 1.5; // Adjust for better visual results
+            
+            if (this.bones['leftupleg']) {
                 const leftKnee = landmarks[25];
                 if (leftHip && leftKnee) {
-                    const leftHipAngle = this.calculateJointAngle(leftHip, leftKnee);
-                    leftHipBone.rotation.x = leftHipAngle.x;
-                    leftHipBone.rotation.z = leftHipAngle.z;
+                    const hipToKnee = {
+                        x: leftKnee.x - leftHip.x,
+                        y: leftKnee.y - leftHip.y,
+                        z: leftKnee.z - leftHip.z
+                    };
+                    
+                    this.bones['leftupleg'].rotation.x = 
+                        Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
+                    this.bones['leftupleg'].rotation.z = 
+                        Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
                 }
             }
             
-            if (this.bones['righthip'] || this.bones['rightupleg']) {
-                const rightHipBone = this.bones['righthip'] || this.bones['rightupleg'];
+            if (this.bones['rightupleg']) {
                 const rightKnee = landmarks[26];
                 if (rightHip && rightKnee) {
-                    const rightHipAngle = this.calculateJointAngle(rightHip, rightKnee);
-                    rightHipBone.rotation.x = rightHipAngle.x;
-                    rightHipBone.rotation.z = -rightHipAngle.z;
+                    const hipToKnee = {
+                        x: rightKnee.x - rightHip.x,
+                        y: rightKnee.y - rightHip.y,
+                        z: rightKnee.z - rightHip.z
+                    };
+                    
+                    this.bones['rightupleg'].rotation.x = 
+                        Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
+                    this.bones['rightupleg'].rotation.z = 
+                        -Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
                 }
             }
             
-            // Handle knee rotation
-            if (this.bones['leftknee'] || this.bones['leftleg']) {
+            // Enhanced knee rotation
+            if (this.bones['leftleg']) {
                 const leftKnee = landmarks[25];
                 const leftAnkle = landmarks[27];
                 if (leftKnee && leftAnkle) {
-                    const leftKneeAngle = this.calculateJointAngle(leftKnee, leftAnkle);
-                    const targetBone = this.bones['leftknee'] || this.bones['leftleg'];
-                    targetBone.rotation.x = -Math.abs(leftKneeAngle.x);
+                    const kneeAngle = Math.atan2(
+                        leftAnkle.y - leftKnee.y,
+                        leftAnkle.z - leftKnee.z
+                    );
+                    this.bones['leftleg'].rotation.x = -Math.abs(kneeAngle) * 2;
                 }
             }
             
-            if (this.bones['rightknee'] || this.bones['rightleg']) {
+            if (this.bones['rightleg']) {
                 const rightKnee = landmarks[26];
                 const rightAnkle = landmarks[28];
                 if (rightKnee && rightAnkle) {
-                    const rightKneeAngle = this.calculateJointAngle(rightKnee, rightAnkle);
-                    const targetBone = this.bones['rightknee'] || this.bones['rightleg'];
-                    targetBone.rotation.x = -Math.abs(rightKneeAngle.x);
+                    const kneeAngle = Math.atan2(
+                        rightAnkle.y - rightKnee.y,
+                        rightAnkle.z - rightKnee.z
+                    );
+                    this.bones['rightleg'].rotation.x = -Math.abs(kneeAngle) * 2;
                 }
             }
         }
-    }
-
-    calculateJointAngle(joint1, joint2) {
-        // Convert MediaPipe coordinates to angles
-        // This is a simplified calculation, adjust as needed for your model
-        const deltaX = joint2.x - joint1.x;
-        const deltaY = joint2.y - joint1.y;
-        const deltaZ = joint2.z - joint1.z;
-        
-        return {
-            x: Math.atan2(deltaY, deltaZ),
-            y: Math.atan2(deltaX, deltaZ),
-            z: Math.atan2(deltaY, deltaX)
-        };
     }
 
     animate() {
