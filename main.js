@@ -888,76 +888,28 @@ class BodyTrackingApp {
             document.body.appendChild(this.calibrationMessage);
         }
         
-        this.updateDebugInfo('Calibration: Stand in T-pose');
+        this.updateDebugInfo('Calibration: Stand in T-pose with arms straight out to sides');
         this.calibrationMessage.style.display = 'block';
-        this.calibrationMessage.textContent = `Stand in T-pose! Calibrating in ${this.calibrationCountdown}`;
-        
+        this.calibrationMessage.innerHTML = `Stand in T-pose!<br>
+            <div style="text-align:center; margin-top:10px;">
+                <svg width="100" height="100" viewBox="0 0 100 100">
+                    <circle cx="50" cy="30" r="10" fill="white"/>
+                    <line x1="50" y1="40" x2="50" y2="70" stroke="white" stroke-width="4"/>
+                    <line x1="50" y1="50" x2="10" y2="50" stroke="white" stroke-width="4"/>
+                    <line x1="50" y1="50" x2="90" y2="50" stroke="white" stroke-width="4"/>
+                    <line x1="50" y1="70" x2="30" y2="90" stroke="white" stroke-width="4"/>
+                    <line x1="50" y1="70" x2="70" y2="90" stroke="white" stroke-width="4"/>
+                </svg>
+            </div>
+            Calibrating in ${this.calibrationCountdown}`;
+    
         // Start calibration process
         this.calibrationInterval = setInterval(() => this.updateCalibration(), 1000);
         
         // Make sure video is visible during calibration
         if (!this.videoVisible) this.toggleVideo();
     }
-    
-    updateCalibration() {
-        this.calibrationCountdown--;
-        
-        if (this.calibrationCountdown > 0) {
-            // Update countdown message
-            this.calibrationMessage.textContent = `Stand in T-pose! Calibrating in ${this.calibrationCountdown}`;
-        } else {
-            // Capture calibration data
-            clearInterval(this.calibrationInterval);
-            this.captureCalibrationData();
-        }
-    }
-    
-    async captureCalibrationData() {
-        this.calibrationMessage.textContent = "Processing... Hold your pose!";
-        
-        try {
-            const videoElement = document.getElementById('webcam');
-            
-            // Get a single pose detection for calibration
-            await this.poseDetector.send({image: videoElement});
-            
-            // Wait a moment to ensure we have landmarks
-            setTimeout(() => {
-                if (this.lastValidLandmarks) {
-                    this.calibrationData = JSON.parse(JSON.stringify(this.lastValidLandmarks));
-                    this.finishCalibration();
-                } else {
-                    this.calibrationMessage.textContent = "Calibration failed! Try again.";
-                    setTimeout(() => {
-                        this.isCalibrating = false;
-                        this.calibrationMessage.style.display = 'none';
-                    }, 2000);
-                }
-            }, 500);
-        } catch (error) {
-            console.error('Calibration error:', error);
-            this.calibrationMessage.textContent = "Calibration error! Try again.";
-            setTimeout(() => {
-                this.isCalibrating = false;
-                this.calibrationMessage.style.display = 'none';
-            }, 2000);
-        }
-    }
-    
-    finishCalibration() {
-        this.calibrationMessage.textContent = "Calibration complete!";
-        setTimeout(() => {
-            this.isCalibrating = false;
-            this.calibrationMessage.style.display = 'none';
-            this.updateDebugInfo('Calibration complete. Ready to track!');
-            
-            // Auto-start tracking after calibration
-            if (!this.isTracking) {
-                this.toggleTracking();
-            }
-        }, 1000);
-    }
-    
+
     applyCalibration(landmarks) {
         if (!this.calibrationData) return landmarks;
         
@@ -976,34 +928,99 @@ class BodyTrackingApp {
             z: (calibLeftShoulder.z + calibRightShoulder.z + calibLeftHip.z + calibRightHip.z) / 4
         };
         
-        // Calculate calibration angles
-        const calibTorsoAngle = Math.atan2(
-            calibRightShoulder.x - calibLeftShoulder.x,
-            calibRightShoulder.y - calibLeftShoulder.y
-        );
-        
-        // Fix hand orientation issues - if we detected that hands are inverted during calibration
-        const leftHandInverted = calibLeftShoulder.x > calibRightShoulder.x;
+        // Determine if the user is mirrored compared to the model
+        // In webcam, left shoulder is on right side of screen
+        const shoulderWidth = Math.abs(calibRightShoulder.x - calibLeftShoulder.x);
+        const isMirrored = calibLeftShoulder.x > calibRightShoulder.x;
         
         // Apply adjustments to each landmark
         for (let i = 0; i < adjustedLandmarks.length; i++) {
             // Center adjustment (remove calibration center offset)
             adjustedLandmarks[i].x -= (calibTorsoCenter.x - 0.5);
             
-            // Fix mirroring issues for left/right sides
-            if (leftHandInverted) {
-                // Swap left and right for specific landmarks if needed
-                if ([11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31].includes(i)) {
-                    // Left side landmarks
-                    adjustedLandmarks[i].x = 1 - adjustedLandmarks[i].x;
-                } else if ([12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32].includes(i)) {
-                    // Right side landmarks
-                    adjustedLandmarks[i].x = 1 - adjustedLandmarks[i].x;
-                }
+            // Fix mirroring issues - correctly swap left/right sides
+            if (isMirrored) {
+                // Mirror the x-coordinate across the center line
+                adjustedLandmarks[i].x = 1 - adjustedLandmarks[i].x;
             }
+            
+            // Apply scale normalization based on calibration shoulder width
+            // This helps with different body sizes
+            const scaleFactor = 0.3 / shoulderWidth; // Normalize to standard width
+            adjustedLandmarks[i].x = 0.5 + (adjustedLandmarks[i].x - 0.5) * scaleFactor;
         }
         
         return adjustedLandmarks;
+    }
+
+    updateCalibration() {
+        this.calibrationCountdown--;
+        
+        if (this.calibrationCountdown > 0) {
+            // Update countdown message
+            this.calibrationMessage.innerHTML = `Stand in T-pose!<br>
+                <div style="text-align:center; margin-top:10px;">
+                    <svg width="100" height="100" viewBox="0 0 100 100">
+                        <circle cx="50" cy="30" r="10" fill="white"/>
+                        <line x1="50" y1="40" x2="50" y2="70" stroke="white" stroke-width="4"/>
+                        <line x1="50" y1="50" x2="10" y2="50" stroke="white" stroke-width="4"/>
+                        <line x1="50" y1="50" x2="90" y2="50" stroke="white" stroke-width="4"/>
+                        <line x1="50" y1="70" x2="30" y2="90" stroke="white" stroke-width="4"/>
+                        <line x1="50" y1="70" x2="70" y2="90" stroke="white" stroke-width="4"/>
+                    </svg>
+                </div>
+                Calibrating in ${this.calibrationCountdown}`;
+        } else {
+            // Capture calibration data
+            clearInterval(this.calibrationInterval);
+            this.captureCalibrationData();
+        }
+    }
+    
+    async captureCalibrationData() {
+        this.calibrationMessage.innerHTML = "Processing... Hold your pose!";
+        
+        try {
+            const videoElement = document.getElementById('webcam');
+            
+            // Get a single pose detection for calibration
+            await this.poseDetector.send({image: videoElement});
+            
+            // Wait a moment to ensure we have landmarks
+            setTimeout(() => {
+                if (this.lastValidLandmarks) {
+                    this.calibrationData = JSON.parse(JSON.stringify(this.lastValidLandmarks));
+                    this.finishCalibration();
+                } else {
+                    this.calibrationMessage.innerHTML = "Calibration failed! Try again.";
+                    setTimeout(() => {
+                        this.isCalibrating = false;
+                        this.calibrationMessage.style.display = 'none';
+                    }, 2000);
+                }
+            }, 500);
+        } catch (error) {
+            console.error('Calibration error:', error);
+            this.calibrationMessage.innerHTML = "Calibration error! Try again.";
+            setTimeout(() => {
+                this.isCalibrating = false;
+                this.calibrationMessage.style.display = 'none';
+            }, 2000);
+        }
+    }
+    
+    finishCalibration() {
+        this.calibrationMessage.innerHTML = "Calibration complete!";
+        setTimeout(() => {
+            this.isCalibrating = false;
+            this.calibrationMessage.style.display = 'none';
+            this.updateDebugInfo('Calibration complete. Ready to track!');
+            
+            // Auto-start tracking after calibration
+            if (!this.isTracking) {
+                this.toggleTracking();
+            }
+        }, 1000);
     }
 
 }
