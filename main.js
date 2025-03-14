@@ -329,9 +329,11 @@ class BodyTrackingApp {
                 this.bones['hips'].position.x = (hipCenter.x - 0.5) * positionScaleFactor;
                 // Y is up in Three.js, but MediaPipe y increases downward
                 this.bones['hips'].position.y = (0.5 - hipCenter.y) * positionScaleFactor;
+                // Add z-axis movement
+                this.bones['hips'].position.z = -hipCenter.z * positionScaleFactor;
             }
             
-            // Handle spine and neck rotation
+            // Improved spine and neck rotation with more precise angles
             const spineAngleX = Math.atan2(
                 shoulderCenter.z - hipCenter.z,
                 shoulderCenter.y - hipCenter.y
@@ -342,242 +344,223 @@ class BodyTrackingApp {
                 shoulderCenter.y - hipCenter.y
             );
             
-            ['spine', 'spine1', 'spine2'].forEach(boneName => {
+            // Apply more aggressive spine rotation for better visual effect
+            ['spine', 'spine1', 'spine2'].forEach((boneName, index) => {
                 if (this.bones[boneName]) {
-                    this.bones[boneName].rotation.x = spineAngleX;
-                    this.bones[boneName].rotation.z = spineAngleZ;
+                    // Apply progressive rotation up the spine
+                    const factor = 1 + (index * 0.2); // Increase rotation as we go up
+                    this.bones[boneName].rotation.x = spineAngleX * factor;
+                    this.bones[boneName].rotation.z = spineAngleZ * factor;
                 }
             });
             
-            // Enhanced shoulder rotation
+            // Enhanced shoulder rotation with broader range of motion
             if (this.bones['leftshoulder'] && leftShoulder) {
                 const leftElbow = landmarks[13];
-                if (leftElbow) {
-                    this.bones['leftshoulder'].rotation.x = 
-                        Math.atan2(leftElbow.z - leftShoulder.z, leftElbow.y - leftShoulder.y);
-                    this.bones['leftshoulder'].rotation.y = 
-                        Math.atan2(leftElbow.x - leftShoulder.x, leftElbow.z - leftShoulder.z);
-                    this.bones['leftshoulder'].rotation.z = 
-                        Math.atan2(leftElbow.y - leftShoulder.y, leftElbow.x - leftShoulder.x) - Math.PI/2;
+                if (leftElbow && leftElbow.visibility > 0.3) {
+                    // Calculate vectors for better angle calculation
+                    const shoulderToElbow = {
+                        x: leftElbow.x - leftShoulder.x,
+                        y: leftElbow.y - leftShoulder.y,
+                        z: leftElbow.z - leftShoulder.z
+                    };
+                    
+                    // Calculate rotation angles with enhanced range
+                    const rotationX = Math.atan2(shoulderToElbow.z, shoulderToElbow.y) * 2;
+                    const rotationY = Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
+                    const rotationZ = Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 - Math.PI/2;
+                    
+                    this.bones['leftshoulder'].rotation.x = rotationX;
+                    this.bones['leftshoulder'].rotation.y = rotationY;
+                    this.bones['leftshoulder'].rotation.z = rotationZ;
                 }
             }
             
             if (this.bones['rightshoulder'] && rightShoulder) {
                 const rightElbow = landmarks[14];
-                if (rightElbow) {
-                    this.bones['rightshoulder'].rotation.x = 
-                        Math.atan2(rightElbow.z - rightShoulder.z, rightElbow.y - rightShoulder.y);
-                    this.bones['rightshoulder'].rotation.y = 
-                        -Math.atan2(rightElbow.x - rightShoulder.x, rightElbow.z - rightShoulder.z);
-                    this.bones['rightshoulder'].rotation.z = 
-                        -Math.atan2(rightElbow.y - rightShoulder.y, rightElbow.x - rightShoulder.x) + Math.PI/2;
+                if (rightElbow && rightElbow.visibility > 0.3) {
+                    // Calculate vectors for better angle calculation
+                    const shoulderToElbow = {
+                        x: rightElbow.x - rightShoulder.x,
+                        y: rightElbow.y - rightShoulder.y,
+                        z: rightElbow.z - rightShoulder.z
+                    };
+                    
+                    // Calculate rotation angles with enhanced range
+                    const rotationX = Math.atan2(shoulderToElbow.z, shoulderToElbow.y) * 2;
+                    const rotationY = -Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
+                    const rotationZ = -Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 + Math.PI/2;
+                    
+                    this.bones['rightshoulder'].rotation.x = rotationX;
+                    this.bones['rightshoulder'].rotation.y = rotationY;
+                    this.bones['rightshoulder'].rotation.z = rotationZ;
                 }
             }
             
-            // Enhanced elbow rotation
-            if (this.bones['leftelbow'] || this.bones['leftforearm']) {
-                const leftElbow = landmarks[13];
-                const leftWrist = landmarks[15];
-                if (leftElbow && leftWrist) {
-                    const targetBone = this.bones['leftelbow'] || this.bones['leftforearm'];
-                    // Calculate angle between upper arm and forearm
-                    const angle = Math.atan2(
-                        leftWrist.y - leftElbow.y,
-                        leftWrist.x - leftElbow.x
-                    ) - Math.atan2(
-                        leftElbow.y - leftShoulder.y,
-                        leftElbow.x - leftShoulder.x
-                    );
-                    targetBone.rotation.z = angle;
+            // Enhanced elbow rotation with improved bend mechanics
+            // Look for possible alternative bone names in the model
+            const leftElbowBones = ['leftelbow', 'leftforearm', 'leftarm'];
+            const rightElbowBones = ['rightelbow', 'rightforearm', 'rightarm'];
+            
+            // Function to find the first available bone from a list
+            const findBone = (boneNames) => {
+                for (const name of boneNames) {
+                    if (this.bones[name]) return this.bones[name];
                 }
+                return null;
+            };
+            
+            const leftElbowBone = findBone(leftElbowBones);
+            const leftElbow = landmarks[13];
+            const leftWrist = landmarks[15];
+            
+            if (leftElbowBone && leftElbow && leftWrist && leftElbow.visibility > 0.3) {
+                // Calculate arm bend angle with improved mechanics
+                const upperArmVector = {
+                    x: leftElbow.x - leftShoulder.x,
+                    y: leftElbow.y - leftShoulder.y,
+                    z: leftElbow.z - leftShoulder.z
+                };
+                
+                const forearmVector = {
+                    x: leftWrist.x - leftElbow.x,
+                    y: leftWrist.y - leftElbow.y,
+                    z: leftWrist.z - leftElbow.z
+                };
+                
+                // Calculate cross product for rotation axis
+                const crossProduct = {
+                    x: upperArmVector.y * forearmVector.z - upperArmVector.z * forearmVector.y,
+                    y: upperArmVector.z * forearmVector.x - upperArmVector.x * forearmVector.z,
+                    z: upperArmVector.x * forearmVector.y - upperArmVector.y * forearmVector.x
+                };
+                
+                // Apply elbow rotation
+                leftElbowBone.rotation.z = Math.atan2(
+                    forearmVector.y, forearmVector.x
+                ) - Math.atan2(
+                    upperArmVector.y, upperArmVector.x
+                );
+                
+                // Add some twist based on wrist orientation
+                leftElbowBone.rotation.y = Math.atan2(
+                    crossProduct.y, 
+                    Math.sqrt(crossProduct.x * crossProduct.x + crossProduct.z * crossProduct.z)
+                ) * 0.5;
             }
             
-            if (this.bones['rightelbow'] || this.bones['rightforearm']) {
-                const rightElbow = landmarks[14];
-                const rightWrist = landmarks[16];
-                if (rightElbow && rightWrist) {
-                    const targetBone = this.bones['rightelbow'] || this.bones['rightforearm'];
-                    // Calculate angle between upper arm and forearm
-                    const angle = Math.atan2(
-                        rightWrist.y - rightElbow.y,
-                        rightWrist.x - rightElbow.x
-                    ) - Math.atan2(
-                        rightElbow.y - rightShoulder.y,
-                        rightElbow.x - rightShoulder.x
-                    );
-                    targetBone.rotation.z = -angle;
-                }
+            const rightElbowBone = findBone(rightElbowBones);
+            const rightElbow = landmarks[14];
+            const rightWrist = landmarks[16];
+            
+            if (rightElbowBone && rightElbow && rightWrist && rightElbow.visibility > 0.3) {
+                // Calculate arm bend angle with improved mechanics
+                const upperArmVector = {
+                    x: rightElbow.x - rightShoulder.x,
+                    y: rightElbow.y - rightShoulder.y,
+                    z: rightElbow.z - rightShoulder.z
+                };
+                
+                const forearmVector = {
+                    x: rightWrist.x - rightElbow.x,
+                    y: rightWrist.y - rightElbow.y,
+                    z: rightWrist.z - rightElbow.z
+                };
+                
+                // Calculate cross product for rotation axis
+                const crossProduct = {
+                    x: upperArmVector.y * forearmVector.z - upperArmVector.z * forearmVector.y,
+                    y: upperArmVector.z * forearmVector.x - upperArmVector.x * forearmVector.z,
+                    z: upperArmVector.x * forearmVector.y - upperArmVector.y * forearmVector.x
+                };
+                
+                // Apply elbow rotation
+                rightElbowBone.rotation.z = -(Math.atan2(
+                    forearmVector.y, forearmVector.x
+                ) - Math.atan2(
+                    upperArmVector.y, upperArmVector.x
+                ));
+                
+                // Add some twist based on wrist orientation
+                rightElbowBone.rotation.y = Math.atan2(
+                    crossProduct.y, 
+                    Math.sqrt(crossProduct.x * crossProduct.x + crossProduct.z * crossProduct.z)
+                ) * 0.5;
             }
             
-            // Enhanced hip rotation with better leg tracking
-            const legRotationScaleFactor = 1.5; // Adjust for better visual results
+            // Enhanced hip and leg rotation with more accurate joint angles
+            const legRotationScaleFactor = 2.5; // Increased for better visual results
             
             if (this.bones['leftupleg']) {
                 const leftKnee = landmarks[25];
-                if (leftHip && leftKnee) {
+                if (leftHip && leftKnee && leftHip.visibility > 0.3) {
                     const hipToKnee = {
                         x: leftKnee.x - leftHip.x,
                         y: leftKnee.y - leftHip.y,
                         z: leftKnee.z - leftHip.z
                     };
                     
+                    // Apply comprehensive leg rotation
                     this.bones['leftupleg'].rotation.x = 
                         Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
                     this.bones['leftupleg'].rotation.z = 
                         Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
+                    // Add some hip rotation for better stance
+                    this.bones['leftupleg'].rotation.y = 
+                        Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
                 }
             }
             
             if (this.bones['rightupleg']) {
                 const rightKnee = landmarks[26];
-                if (rightHip && rightKnee) {
+                if (rightHip && rightKnee && rightHip.visibility > 0.3) {
                     const hipToKnee = {
                         x: rightKnee.x - rightHip.x,
                         y: rightKnee.y - rightHip.y,
                         z: rightKnee.z - rightHip.z
                     };
                     
+                    // Apply comprehensive leg rotation
                     this.bones['rightupleg'].rotation.x = 
                         Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
                     this.bones['rightupleg'].rotation.z = 
                         -Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
+                    // Add some hip rotation for better stance
+                    this.bones['rightupleg'].rotation.y = 
+                        -Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
                 }
             }
             
-            // Enhanced knee rotation
+            // Enhanced knee rotation with better bend mechanics
+            const kneeRotationFactor = 3.0; // Increased for more visible effect
+            
             if (this.bones['leftleg']) {
                 const leftKnee = landmarks[25];
                 const leftAnkle = landmarks[27];
-                if (leftKnee && leftAnkle) {
-                    const kneeAngle = Math.atan2(
-                        leftAnkle.y - leftKnee.y,
-                        leftAnkle.z - leftKnee.z
+                if (leftKnee && leftAnkle && leftKnee.visibility > 0.3) {
+                    // Calculate knee bend angle
+                    const kneeAngle = Math.PI - Math.acos(
+                        Math.min(1, Math.max(-1, 
+                            Math.cos(Math.atan2(leftAnkle.y - leftKnee.y, leftAnkle.z - leftKnee.z)) *
+                            Math.cos(Math.atan2(leftKnee.y - leftHip.y, leftKnee.z - leftHip.z))
+                        ))
                     );
-                    this.bones['leftleg'].rotation.x = -Math.abs(kneeAngle) * 2;
+                    this.bones['leftleg'].rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
                 }
             }
             
             if (this.bones['rightleg']) {
                 const rightKnee = landmarks[26];
                 const rightAnkle = landmarks[28];
-                if (rightKnee && rightAnkle) {
-                    const kneeAngle = Math.atan2(
-                        rightAnkle.y - rightKnee.y,
-                        rightAnkle.z - rightKnee.z
+                if (rightKnee && rightAnkle && rightKnee.visibility > 0.3) {
+                    // Calculate knee bend angle
+                    const kneeAngle = Math.PI - Math.acos(
+                        Math.min(1, Math.max(-1, 
+                            Math.cos(Math.atan2(rightAnkle.y - rightKnee.y, rightAnkle.z - rightKnee.z)) *
+                            Math.cos(Math.atan2(rightKnee.y - rightHip.y, rightKnee.z - rightHip.z))
+                        ))
                     );
-                    this.bones['rightleg'].rotation.x = -Math.abs(kneeAngle) * 2;
-                }
-            }
-            
-            // Handle wrist and hand tracking
-            if (this.bones['lefthand'] || this.bones['leftwrist']) {
-                const leftWrist = landmarks[15];
-                const leftIndex = landmarks[19]; // Index finger MCP joint
-                
-                if (leftWrist && leftIndex && leftWrist.visibility > 0.3) {
-                    const targetBone = this.bones['lefthand'] || this.bones['leftwrist'];
-                    // Calculate wrist flexion/extension
-                    const wristAngleX = Math.atan2(
-                        leftIndex.z - leftWrist.z,
-                        leftIndex.y - leftWrist.y
-                    );
-                    // Calculate wrist rotation
-                    const wristAngleY = Math.atan2(
-                        leftIndex.x - leftWrist.x,
-                        leftIndex.z - leftWrist.z
-                    );
-                    
-                    targetBone.rotation.x = wristAngleX;
-                    targetBone.rotation.y = wristAngleY;
-                }
-            }
-            
-            if (this.bones['righthand'] || this.bones['rightwrist']) {
-                const rightWrist = landmarks[16];
-                const rightIndex = landmarks[20]; // Index finger MCP joint
-                
-                if (rightWrist && rightIndex && rightWrist.visibility > 0.3) {
-                    const targetBone = this.bones['righthand'] || this.bones['rightwrist'];
-                    // Calculate wrist flexion/extension
-                    const wristAngleX = Math.atan2(
-                        rightIndex.z - rightWrist.z,
-                        rightIndex.y - rightWrist.y
-                    );
-                    // Calculate wrist rotation
-                    const wristAngleY = -Math.atan2(
-                        rightIndex.x - rightWrist.x,
-                        rightIndex.z - rightWrist.z
-                    );
-                    
-                    targetBone.rotation.x = wristAngleX;
-                    targetBone.rotation.y = wristAngleY;
-                }
-            }
-            
-            // Handle neck and head tracking
-            const nose = landmarks[0];
-            const leftEar = landmarks[7];
-            const rightEar = landmarks[8];
-            
-            if (nose && leftEar && rightEar && 
-                (this.bones['neck'] || this.bones['head'])) {
-                const targetBone = this.bones['neck'] || this.bones['head'];
-                
-                // Calculate head center
-                const headCenter = {
-                    x: (leftEar.x + rightEar.x) / 2,
-                    y: (leftEar.y + rightEar.y) / 2,
-                    z: (leftEar.z + rightEar.z) / 2
-                };
-                
-                // Calculate neck to nose vector for head orientation
-                const neckToNose = {
-                    x: nose.x - shoulderCenter.x,
-                    y: nose.y - shoulderCenter.y,
-                    z: nose.z - shoulderCenter.z
-                };
-                
-                // Calculate head rotation angles
-                const headTilt = Math.atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x);
-                const headNod = Math.atan2(neckToNose.z, neckToNose.y);
-                const headTurn = Math.atan2(neckToNose.x, neckToNose.z);
-                
-                // Apply head rotations
-                targetBone.rotation.z = headTilt;
-                targetBone.rotation.x = headNod;
-                targetBone.rotation.y = headTurn;
-            }
-            
-            // Handle ankle and foot tracking
-            if (this.bones['leftfoot'] || this.bones['leftankle']) {
-                const leftAnkle = landmarks[27];
-                const leftFoot = landmarks[31]; // Left foot index
-                
-                if (leftAnkle && leftFoot && leftAnkle.visibility > 0.3) {
-                    const targetBone = this.bones['leftfoot'] || this.bones['leftankle'];
-                    // Calculate ankle angle
-                    const ankleAngleX = Math.atan2(
-                        leftFoot.z - leftAnkle.z,
-                        leftFoot.y - leftAnkle.y
-                    );
-                    
-                    targetBone.rotation.x = ankleAngleX;
-                }
-            }
-            
-            if (this.bones['rightfoot'] || this.bones['rightankle']) {
-                const rightAnkle = landmarks[28];
-                const rightFoot = landmarks[32]; // Right foot index
-                
-                if (rightAnkle && rightFoot && rightAnkle.visibility > 0.3) {
-                    const targetBone = this.bones['rightfoot'] || this.bones['rightankle'];
-                    // Calculate ankle angle
-                    const ankleAngleX = Math.atan2(
-                        rightFoot.z - rightAnkle.z,
-                        rightFoot.y - rightAnkle.y
-                    );
-                    
-                    targetBone.rotation.x = ankleAngleX;
+                    this.bones['rightleg'].rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
                 }
             }
         }
