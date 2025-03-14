@@ -22,6 +22,10 @@ class BodyTrackingApp {
         this.lastValidLandmarks = null;
         this.trackingTolerance = 0.5; // Tolerance for landmark visibility
         
+        // Add skeleton visualization
+        this.skeletonHelper = null;
+        this.poseVisualization = null;
+        
         this.init();
     }
 
@@ -99,6 +103,18 @@ class BodyTrackingApp {
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(window.innerWidth, window.innerHeight);
         });
+        
+        // Toggle visibility of skeleton helper using 'S' key
+        window.addEventListener('keydown', (event) => {
+            if (event.key.toLowerCase() === 's') {
+                if (this.skeletonHelper) {
+                    this.skeletonHelper.visible = !this.skeletonHelper.visible;
+                }
+                if (this.poseVisualization) {
+                    this.poseVisualization.visible = !this.poseVisualization.visible;
+                }
+            }
+        });
     }
 
     async initWebcam() {
@@ -148,6 +164,12 @@ class BodyTrackingApp {
                     
                     // Map bones for pose tracking
                     this.mapModelBones(this.model);
+                    
+                    // Add skeleton helper
+                    this.addSkeletonHelper();
+                    
+                    // Create pose visualization
+                    this.createPoseVisualization();
                     
                     resolve();
                 },
@@ -274,6 +296,9 @@ class BodyTrackingApp {
 
     updateModelPose(landmarks) {
         if (!this.skeleton || !landmarks) return;
+        
+        // Update pose visualization
+        this.updatePoseVisualization(landmarks);
         
         // Enhanced mapping between MediaPipe landmarks and model bones
         
@@ -448,6 +473,7 @@ class BodyTrackingApp {
             if (this.bones['lefthand'] || this.bones['leftwrist']) {
                 const leftWrist = landmarks[15];
                 const leftIndex = landmarks[19]; // Index finger MCP joint
+                
                 if (leftWrist && leftIndex && leftWrist.visibility > 0.3) {
                     const targetBone = this.bones['lefthand'] || this.bones['leftwrist'];
                     // Calculate wrist flexion/extension
@@ -469,6 +495,7 @@ class BodyTrackingApp {
             if (this.bones['righthand'] || this.bones['rightwrist']) {
                 const rightWrist = landmarks[16];
                 const rightIndex = landmarks[20]; // Index finger MCP joint
+                
                 if (rightWrist && rightIndex && rightWrist.visibility > 0.3) {
                     const targetBone = this.bones['righthand'] || this.bones['rightwrist'];
                     // Calculate wrist flexion/extension
@@ -573,6 +600,8 @@ class BodyTrackingApp {
         if (this.isTracking) {
             button.textContent = 'Stop Tracking';
             this.updateDebugInfo('Tracking status: Starting...');
+            // Create fresh pose visualization when tracking starts
+            this.createPoseVisualization();
             this.startPoseDetection();
         } else {
             button.textContent = 'Start Tracking';
@@ -602,6 +631,100 @@ class BodyTrackingApp {
         // Render scene
         this.renderer.render(this.scene, this.camera);
     }
+
+    createPoseVisualization() {
+        // Remove existing visualization if present
+        if (this.poseVisualization) {
+            this.scene.remove(this.poseVisualization);
+        }
+        
+        // Create a group to hold all the pose visualization elements
+        this.poseVisualization = new THREE.Group();
+        this.scene.add(this.poseVisualization);
+    }
+
+    updatePoseVisualization(landmarks) {
+        if (!landmarks || !this.poseVisualization) return;
+        
+        // Clear previous visualization
+        while (this.poseVisualization.children.length > 0) {
+            const object = this.poseVisualization.children[0];
+            if (object.geometry) object.geometry.dispose();
+            if (object.material) object.material.dispose();
+            this.poseVisualization.remove(object);
+        }
+        
+        // Define the connections between landmarks for skeleton visualization
+        const connections = [
+            // Face
+            [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
+            // Torso
+            [11, 12], [11, 23], [12, 24], [23, 24],
+            // Arms
+            [11, 13], [13, 15], [12, 14], [14, 16],
+            // Legs
+            [23, 25], [25, 27], [24, 26], [26, 28],
+            // Hands (simplified)
+            [15, 17], [17, 19], [16, 18], [18, 20],
+            // Feet (simplified)
+            [27, 31], [28, 32]
+        ];
+        
+        // Scale factor for visualization
+        const scaleFactor = 2;
+        const positionOffset = new THREE.Vector3(0, 0, 0);
+        
+        // Create markers for each landmark
+        for (let i = 0; i < landmarks.length; i++) {
+            const landmark = landmarks[i];
+            if (landmark.visibility > 0.2) {
+                const geometry = new THREE.SphereGeometry(0.025, 16, 16);
+                const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+                const sphere = new THREE.Mesh(geometry, material);
+                
+                // Position the sphere (adjust mapping to match Three.js coordinate system)
+                sphere.position.x = (landmark.x - 0.5) * scaleFactor + positionOffset.x;
+                sphere.position.y = (0.5 - landmark.y) * scaleFactor + positionOffset.y;
+                sphere.position.z = -landmark.z * scaleFactor + positionOffset.z;
+                
+                this.poseVisualization.add(sphere);
+            }
+        }
+        
+        // Create lines connecting the landmarks
+        for (const [i, j] of connections) {
+            if (landmarks[i] && landmarks[j] && 
+                landmarks[i].visibility > 0.2 && landmarks[j].visibility > 0.2) {
+                
+                const geometry = new THREE.BufferGeometry();
+                const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
+                
+                const positionArray = new Float32Array(6);
+                // Start point
+                positionArray[0] = (landmarks[i].x - 0.5) * scaleFactor + positionOffset.x;
+                positionArray[1] = (0.5 - landmarks[i].y) * scaleFactor + positionOffset.y;
+                positionArray[2] = -landmarks[i].z * scaleFactor + positionOffset.z;
+                // End point
+                positionArray[3] = (landmarks[j].x - 0.5) * scaleFactor + positionOffset.x;
+                positionArray[4] = (0.5 - landmarks[j].y) * scaleFactor + positionOffset.y;
+                positionArray[5] = -landmarks[j].z * scaleFactor + positionOffset.z;
+                
+                geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
+                const line = new THREE.Line(geometry, material);
+                this.poseVisualization.add(line);
+            }
+        }
+    }
+
+    addSkeletonHelper() {
+        if (this.skeleton) {
+            if (this.skeletonHelper) this.scene.remove(this.skeletonHelper);
+            this.skeletonHelper = new THREE.SkeletonHelper(this.model);
+            this.skeletonHelper.visible = true;
+            this.scene.add(this.skeletonHelper);
+        }
+    }
+
 }
 
 // Initialize the application when the document is loaded
