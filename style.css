@@ -1,0 +1,82 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #121212;
+    color: white;
+    overflow: hidden;
+}
+
+.container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+}
+
+#scene-container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+}
+
+#video-container {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 240px;
+    height: 180px;
+    border: 2px solid white;
+    border-radius: 8px;
+    overflow: hidden;
+    z-index: 2;
+    opacity: 0.8;
+}
+
+#webcam {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* Mirror the webcam feed */
+}
+
+.controls {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    z-index: 3;
+    display: flex;
+    gap: 10px;
+}
+
+button {
+    padding: 10px 15px;
+    background-color: #2a2a2a;
+    border: none;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: #3a3a3a;
+}
+
+#loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 24px;
+    color: white;
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 20px;
+    border-radius: 10px;
+    z-index: 10;
+}
+
