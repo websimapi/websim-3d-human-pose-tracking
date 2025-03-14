@@ -85,12 +85,22 @@ class BodyTrackingApp {
         );
         this.camera.position.set(0, 1.6, 4);
         
-        // Setup renderer
-        this.renderer = new THREE.WebGLRenderer({ antialias: true });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(window.devicePixelRatio);
-        this.renderer.shadowMap.enabled = true;
-        document.getElementById('scene-container').appendChild(this.renderer.domElement);
+        // Setup renderer with proper initialization and error handling
+        try {
+            this.renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                powerPreference: "high-performance",
+                failIfMajorPerformanceCaveat: false
+            });
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio
+            this.renderer.shadowMap.enabled = true;
+            document.getElementById('scene-container').appendChild(this.renderer.domElement);
+        } catch (error) {
+            console.error("WebGL Error:", error);
+            alert("Failed to initialize WebGL renderer. Please try a different browser or device.");
+            throw error; // Propagate error to prevent further execution with invalid renderer
+        }
         
         // Add orbit controls
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -830,12 +840,14 @@ class BodyTrackingApp {
     }
 
     animate() {
+        if (!this.renderer || !this.scene || !this.camera) return;
+        
         requestAnimationFrame(() => this.animate());
         
         const delta = this.clock.getDelta();
         
         // Update controls
-        this.controls.update();
+        if (this.controls) this.controls.update();
         
         // Update animations
         if (this.mixer) {
@@ -843,7 +855,13 @@ class BodyTrackingApp {
         }
         
         // Render scene
-        this.renderer.render(this.scene, this.camera);
+        try {
+            this.renderer.render(this.scene, this.camera);
+        } catch (error) {
+            console.error("WebGL Rendering Error:", error);
+            this.isTracking = false;
+            this.updateDebugInfo("WebGL error occurred. Tracking stopped.");
+        }
     }
 
     createPoseVisualization() {
