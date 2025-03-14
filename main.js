@@ -26,18 +26,24 @@ class BodyTrackingApp {
         this.skeletonHelper = null;
         this.poseVisualization = null;
         
-        // Calibration variables
-        this.isCalibrating = false;
-        this.calibrationData = null;
-        this.calibrationCountdown = 0;
-        this.calibrationMessage = null;
+        // Add tracking toggles for body parts
+        this.trackingToggles = {
+            head: true,
+            torso: true,
+            arms: true,
+            hands: true,
+            legs: true
+        };
+        
+        // Default pose data for when body parts are out of scene
+        this.defaultPose = null;
         
         this.init();
     }
 
     async init() {
         // Set up Three.js scene
-        this.initScene();
+        await this.initScene();
         
         // Initialize webcam
         await this.initWebcam();
@@ -58,7 +64,7 @@ class BodyTrackingApp {
         this.loadingElement.style.display = 'none';
     }
 
-    initScene() {
+    async initScene() {
         // Create scene
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x1a1a1a);
@@ -121,6 +127,9 @@ class BodyTrackingApp {
                 }
             }
         });
+        
+        // Add debug GUI for body part tracking toggles
+        this.createDebugPanel();
     }
 
     async initWebcam() {
@@ -272,7 +281,18 @@ class BodyTrackingApp {
 
     updateDebugInfo(message) {
         if (this.debugElement) {
-            this.debugElement.textContent = message;
+            // Append message instead of replacing it
+            const timestamp = new Date().toLocaleTimeString();
+            const newMessage = `[${timestamp}] ${message}`;
+            
+            // Keep only the last 5 messages
+            const currentMessages = this.debugElement.innerHTML.split('<br>');
+            if (currentMessages.length > 4) {
+                currentMessages.shift();
+            }
+            currentMessages.push(newMessage);
+            
+            this.debugElement.innerHTML = currentMessages.join('<br>');
         }
     }
 
@@ -285,14 +305,23 @@ class BodyTrackingApp {
             const landmark = processedLandmarks[i];
             
             // If a landmark has low visibility but we have previous data
-            if (landmark.visibility < this.trackingTolerance && this.lastValidLandmarks && this.lastValidLandmarks[i]) {
-                // Blend with the last known position for smooth transition
-                const blendFactor = 0.85; // How much we rely on previous position
-                landmark.x = landmark.x * (1 - blendFactor) + this.lastValidLandmarks[i].x * blendFactor;
-                landmark.y = landmark.y * (1 - blendFactor) + this.lastValidLandmarks[i].y * blendFactor;
-                landmark.z = landmark.z * (1 - blendFactor) + this.lastValidLandmarks[i].z * blendFactor;
-                // Increase visibility artificially for pose calculations
-                landmark.visibility = Math.min(this.trackingTolerance, landmark.visibility + 0.2);
+            if (landmark.visibility < this.trackingTolerance) {
+                if (this.lastValidLandmarks && this.lastValidLandmarks[i] && this.lastValidLandmarks[i].visibility >= this.trackingTolerance) {
+                    // Blend with the last known position for smooth transition
+                    const blendFactor = 0.85; // How much we rely on previous position
+                    landmark.x = landmark.x * (1 - blendFactor) + this.lastValidLandmarks[i].x * blendFactor;
+                    landmark.y = landmark.y * (1 - blendFactor) + this.lastValidLandmarks[i].y * blendFactor;
+                    landmark.z = landmark.z * (1 - blendFactor) + this.lastValidLandmarks[i].z * blendFactor;
+                    // Increase visibility artificially for pose calculations
+                    landmark.visibility = Math.min(this.trackingTolerance, landmark.visibility + 0.2);
+                } else if (this.defaultPose && this.defaultPose[i]) {
+                    // Use default pose data when available and no recent valid data
+                    const blendFactor = 0.7; // Less aggressive blend with default pose
+                    landmark.x = landmark.x * (1 - blendFactor) + this.defaultPose[i].x * blendFactor;
+                    landmark.y = landmark.y * (1 - blendFactor) + this.defaultPose[i].y * blendFactor;
+                    landmark.z = landmark.z * (1 - blendFactor) + this.defaultPose[i].z * blendFactor;
+                    landmark.visibility = Math.min(this.trackingTolerance, landmark.visibility + 0.1);
+                }
             }
         }
         
@@ -323,17 +352,13 @@ class BodyTrackingApp {
         // Update pose visualization
         this.updatePoseVisualization(landmarks);
         
-        // Apply calibration if available
-        let adjustedLandmarks = landmarks;
-        if (this.calibrationData) {
-            adjustedLandmarks = this.applyCalibration(landmarks);
-        }
+        // Enhanced mapping between MediaPipe landmarks and model bones
         
         // Calculate torso orientation
-        const leftShoulder = adjustedLandmarks[11];
-        const rightShoulder = adjustedLandmarks[12];
-        const leftHip = adjustedLandmarks[23];
-        const rightHip = adjustedLandmarks[24];
+        const leftShoulder = landmarks[11];
+        const rightShoulder = landmarks[12];
+        const leftHip = landmarks[23];
+        const rightHip = landmarks[24];
         
         if (leftShoulder && rightShoulder && leftHip && rightHip) {
             // Calculate mid points
@@ -350,7 +375,7 @@ class BodyTrackingApp {
             };
             
             // Update root bone position based on hip center
-            if (this.bones['hips']) {
+            if (this.bones['hips'] && this.trackingToggles.torso) {
                 // Adjust the scaling factor as needed for your model
                 const positionScaleFactor = 2;
                 this.bones['hips'].position.x = (hipCenter.x - 0.5) * positionScaleFactor;
@@ -369,32 +394,35 @@ class BodyTrackingApp {
             
             let spineBones = [];
             for (const boneSet of possibleSpineBones) {
-                if (this.bones[boneSet[0]]) {
-                    spineBones = boneSet;
+                if (this.bones[boneSet[0].toLowerCase()]) {
+                    spineBones = boneSet.map(bone => bone.toLowerCase());
                     break;
                 }
             }
             
-            // Improved spine and neck rotation with more precise angles
-            const spineAngleX = Math.atan2(
-                shoulderCenter.z - hipCenter.z,
-                shoulderCenter.y - hipCenter.y
-            );
-            
-            const spineAngleZ = Math.atan2(
-                shoulderCenter.x - hipCenter.x,
-                shoulderCenter.y - hipCenter.y
-            );
-            
-            // Apply more aggressive spine rotation for better visual effect
-            spineBones.forEach((boneName, index) => {
-                if (this.bones[boneName]) {
-                    // Apply progressive rotation up the spine
-                    const factor = 1 + (index * 0.2); // Increase rotation as we go up
-                    this.bones[boneName].rotation.x = spineAngleX * factor;
-                    this.bones[boneName].rotation.z = spineAngleZ * factor;
-                }
-            });
+            // Apply torso rotation only if torso tracking is enabled
+            if (this.trackingToggles.torso) {
+                // Improved spine and neck rotation with more precise angles
+                const spineAngleX = Math.atan2(
+                    shoulderCenter.z - hipCenter.z,
+                    shoulderCenter.y - hipCenter.y
+                );
+                
+                const spineAngleZ = Math.atan2(
+                    shoulderCenter.x - hipCenter.x,
+                    shoulderCenter.y - hipCenter.y
+                );
+                
+                // Apply more aggressive spine rotation for better visual effect
+                spineBones.forEach((boneName, index) => {
+                    if (this.bones[boneName]) {
+                        // Apply progressive rotation up the spine
+                        const factor = 1 + (index * 0.2); // Increase rotation as we go up
+                        this.bones[boneName].rotation.x = spineAngleX * factor;
+                        this.bones[boneName].rotation.z = spineAngleZ * factor;
+                    }
+                });
+            }
             
             // Find shoulder bones
             const possibleLeftShoulderBones = ['leftshoulder', 'mixamorigleftshoulder', 'left_shoulder', 'shoulder.l'];
@@ -403,248 +431,309 @@ class BodyTrackingApp {
             const leftShoulderBone = this.findBone(possibleLeftShoulderBones);
             const rightShoulderBone = this.findBone(possibleRightShoulderBones);
             
-            // Enhanced shoulder rotation with broader range of motion
-            if (leftShoulderBone && leftShoulder) {
-                const leftElbow = adjustedLandmarks[13];
-                if (leftElbow && leftElbow.visibility > 0.3) {
-                    // Calculate vectors for better angle calculation
-                    const shoulderToElbow = {
+            // Apply arm tracking only if arms tracking is enabled
+            if (this.trackingToggles.arms) {
+                // Enhanced shoulder rotation with broader range of motion
+                if (leftShoulderBone && leftShoulder) {
+                    const leftElbow = landmarks[13];
+                    if (leftElbow && leftElbow.visibility > 0.3) {
+                        // Calculate vectors for better angle calculation
+                        const shoulderToElbow = {
+                            x: leftElbow.x - leftShoulder.x,
+                            y: leftElbow.y - leftShoulder.y,
+                            z: leftElbow.z - leftShoulder.z
+                        };
+                        
+                        // Calculate rotation angles with enhanced range
+                        const rotationX = Math.atan2(shoulderToElbow.z, shoulderToElbow.y) * 2;
+                        const rotationY = Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
+                        const rotationZ = Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 - Math.PI/2;
+                        
+                        leftShoulderBone.rotation.x = rotationX;
+                        leftShoulderBone.rotation.y = rotationY;
+                        leftShoulderBone.rotation.z = rotationZ;
+                    }
+                }
+                
+                if (rightShoulderBone && rightShoulder) {
+                    const rightElbow = landmarks[14];
+                    if (rightElbow && rightElbow.visibility > 0.3) {
+                        // Calculate vectors for better angle calculation
+                        const shoulderToElbow = {
+                            x: rightElbow.x - rightShoulder.x,
+                            y: rightElbow.y - rightShoulder.y,
+                            z: rightElbow.z - rightShoulder.z
+                        };
+                        
+                        // Calculate rotation angles with enhanced range
+                        const rotationX = Math.atan2(shoulderToElbow.z, shoulderToElbow.y) * 2;
+                        const rotationY = -Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
+                        const rotationZ = -Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 + Math.PI/2;
+                        
+                        rightShoulderBone.rotation.x = rotationX;
+                        rightShoulderBone.rotation.y = rotationY;
+                        rightShoulderBone.rotation.z = rotationZ;
+                    }
+                }
+                
+                // Enhanced elbow rotation with improved bend mechanics
+                // Look for possible alternative bone names in the model
+                const leftElbowBones = ['leftelbow', 'leftforearm', 'leftarm', 'mixamorigleftarm', 'left_arm', 'arm.l'];
+                const rightElbowBones = ['rightelbow', 'rightforearm', 'rightarm', 'mixamorigrightarm', 'right_arm', 'arm.r'];
+                
+                const leftElbowBone = this.findBone(leftElbowBones);
+                const leftElbow = landmarks[13];
+                const leftWrist = landmarks[15];
+                
+                if (leftElbowBone && leftElbow && leftWrist && leftElbow.visibility > 0.3) {
+                    // Calculate arm bend angle with improved mechanics
+                    const upperArmVector = {
                         x: leftElbow.x - leftShoulder.x,
                         y: leftElbow.y - leftShoulder.y,
                         z: leftElbow.z - leftShoulder.z
                     };
                     
-                    // Calculate rotation angles with enhanced range
-                    const rotationX = Math.atan2(shoulderToElbow.z, shoulderToElbow.y) * 2;
-                    const rotationY = Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
-                    const rotationZ = Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 - Math.PI/2;
+                    const forearmVector = {
+                        x: leftWrist.x - leftElbow.x,
+                        y: leftWrist.y - leftElbow.y,
+                        z: leftWrist.z - leftElbow.z
+                    };
                     
-                    leftShoulderBone.rotation.x = rotationX;
-                    leftShoulderBone.rotation.y = rotationY;
-                    leftShoulderBone.rotation.z = rotationZ;
+                    // Calculate cross product for rotation axis
+                    const crossProduct = {
+                        x: upperArmVector.y * forearmVector.z - upperArmVector.z * forearmVector.y,
+                        y: upperArmVector.z * forearmVector.x - upperArmVector.x * forearmVector.z,
+                        z: upperArmVector.x * forearmVector.y - upperArmVector.y * forearmVector.x
+                    };
+                    
+                    // Apply elbow rotation
+                    leftElbowBone.rotation.z = Math.atan2(
+                        forearmVector.y, forearmVector.x
+                    ) - Math.atan2(
+                        upperArmVector.y, upperArmVector.x
+                    );
+                    
+                    // Add some twist based on wrist orientation
+                    leftElbowBone.rotation.y = Math.atan2(
+                        crossProduct.y, 
+                        Math.sqrt(crossProduct.x * crossProduct.x + crossProduct.z * crossProduct.z)
+                    ) * 0.5;
                 }
-            }
-            
-            if (rightShoulderBone && rightShoulder) {
-                const rightElbow = adjustedLandmarks[14];
-                if (rightElbow && rightElbow.visibility > 0.3) {
-                    // Calculate vectors for better angle calculation
-                    const shoulderToElbow = {
+                
+                const rightElbowBone = this.findBone(rightElbowBones);
+                const rightElbow = landmarks[14];
+                const rightWrist = landmarks[16];
+                
+                if (rightElbowBone && rightElbow && rightWrist && rightElbow.visibility > 0.3) {
+                    // Calculate arm bend angle with improved mechanics
+                    const upperArmVector = {
                         x: rightElbow.x - rightShoulder.x,
                         y: rightElbow.y - rightShoulder.y,
                         z: rightElbow.z - rightShoulder.z
                     };
                     
-                    // Calculate rotation angles with enhanced range
-                    const rotationX = Math.atan2(shoulderToElbow.z, shoulderToElbow.y) * 2;
-                    const rotationY = -Math.atan2(shoulderToElbow.x, shoulderToElbow.z) * 2;
-                    const rotationZ = -Math.atan2(shoulderToElbow.y, shoulderToElbow.x) * 2 + Math.PI/2;
-                    
-                    rightShoulderBone.rotation.x = rotationX;
-                    rightShoulderBone.rotation.y = rotationY;
-                    rightShoulderBone.rotation.z = rotationZ;
-                }
-            }
-            
-            // Enhanced elbow rotation with improved bend mechanics
-            // Look for possible alternative bone names in the model
-            const leftElbowBones = ['leftelbow', 'leftforearm', 'leftarm', 'mixamorigleftarm', 'left_arm', 'arm.l'];
-            const rightElbowBones = ['rightelbow', 'rightforearm', 'rightarm', 'mixamorigrightarm', 'right_arm', 'arm.r'];
-            
-            const leftElbowBone = this.findBone(leftElbowBones);
-            const leftElbow = adjustedLandmarks[13];
-            const leftWrist = adjustedLandmarks[15];
-            
-            if (leftElbowBone && leftElbow && leftWrist && leftElbow.visibility > 0.3) {
-                // Calculate arm bend angle with improved mechanics
-                const upperArmVector = {
-                    x: leftElbow.x - leftShoulder.x,
-                    y: leftElbow.y - leftShoulder.y,
-                    z: leftElbow.z - leftShoulder.z
-                };
-                
-                const forearmVector = {
-                    x: leftWrist.x - leftElbow.x,
-                    y: leftWrist.y - leftElbow.y,
-                    z: leftWrist.z - leftElbow.z
-                };
-                
-                // Calculate cross product for rotation axis
-                const crossProduct = {
-                    x: upperArmVector.y * forearmVector.z - upperArmVector.z * forearmVector.y,
-                    y: upperArmVector.z * forearmVector.x - upperArmVector.x * forearmVector.z,
-                    z: upperArmVector.x * forearmVector.y - upperArmVector.y * forearmVector.x
-                };
-                
-                // Apply elbow rotation
-                leftElbowBone.rotation.z = Math.atan2(
-                    forearmVector.y, forearmVector.x
-                ) - Math.atan2(
-                    upperArmVector.y, upperArmVector.x
-                );
-                
-                // Add some twist based on wrist orientation
-                leftElbowBone.rotation.y = Math.atan2(
-                    crossProduct.y, 
-                    Math.sqrt(crossProduct.x * crossProduct.x + crossProduct.z * crossProduct.z)
-                ) * 0.5;
-            }
-            
-            const rightElbowBone = this.findBone(rightElbowBones);
-            const rightElbow = adjustedLandmarks[14];
-            const rightWrist = adjustedLandmarks[16];
-            
-            if (rightElbowBone && rightElbow && rightWrist && rightElbow.visibility > 0.3) {
-                // Calculate arm bend angle with improved mechanics
-                const upperArmVector = {
-                    x: rightElbow.x - rightShoulder.x,
-                    y: rightElbow.y - rightShoulder.y,
-                    z: rightElbow.z - rightShoulder.z
-                };
-                
-                const forearmVector = {
-                    x: rightWrist.x - rightElbow.x,
-                    y: rightWrist.y - rightElbow.y,
-                    z: rightWrist.z - rightElbow.z
-                };
-                
-                // Calculate cross product for rotation axis
-                const crossProduct = {
-                    x: upperArmVector.y * forearmVector.z - upperArmVector.z * forearmVector.y,
-                    y: upperArmVector.z * forearmVector.x - upperArmVector.x * forearmVector.z,
-                    z: upperArmVector.x * forearmVector.y - upperArmVector.y * forearmVector.x
-                };
-                
-                // Apply elbow rotation
-                rightElbowBone.rotation.z = -(Math.atan2(
-                    forearmVector.y, forearmVector.x
-                ) - Math.atan2(
-                    upperArmVector.y, upperArmVector.x
-                ));
-                
-                // Add some twist based on wrist orientation
-                rightElbowBone.rotation.y = Math.atan2(
-                    crossProduct.y, 
-                    Math.sqrt(crossProduct.x * crossProduct.x + crossProduct.z * crossProduct.z)
-                ) * 0.5;
-            }
-            
-            // Enhanced hip and leg rotation with more accurate joint angles
-            const legRotationScaleFactor = 2.5; // Increased for better visual results
-            
-            // Find possible leg bone names
-            const leftLegBones = ['leftupleg', 'mixamorigleftupleg', 'left_upleg', 'thigh.l'];
-            const rightLegBones = ['rightupleg', 'mixamorigrightupleg', 'right_upleg', 'thigh.r'];
-            
-            const leftUpLegBone = this.findBone(leftLegBones);
-            const rightUpLegBone = this.findBone(rightLegBones);
-            
-            if (leftUpLegBone) {
-                const leftKnee = adjustedLandmarks[25];
-                if (leftHip && leftKnee && leftHip.visibility > 0.3) {
-                    const hipToKnee = {
-                        x: leftKnee.x - leftHip.x,
-                        y: leftKnee.y - leftHip.y,
-                        z: leftKnee.z - leftHip.z
+                    const forearmVector = {
+                        x: rightWrist.x - rightElbow.x,
+                        y: rightWrist.y - rightElbow.y,
+                        z: rightWrist.z - rightElbow.z
                     };
                     
-                    // Apply comprehensive leg rotation
-                    leftUpLegBone.rotation.x = 
-                        Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
-                    leftUpLegBone.rotation.z = 
-                        Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
-                    // Add some hip rotation for better stance
-                    leftUpLegBone.rotation.y = 
-                        Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
-                }
-            }
-            
-            if (rightUpLegBone) {
-                const rightKnee = adjustedLandmarks[26];
-                if (rightHip && rightKnee && rightHip.visibility > 0.3) {
-                    const hipToKnee = {
-                        x: rightKnee.x - rightHip.x,
-                        y: rightKnee.y - rightHip.y,
-                        z: rightKnee.z - rightHip.z
+                    // Calculate cross product for rotation axis
+                    const crossProduct = {
+                        x: upperArmVector.y * forearmVector.z - upperArmVector.z * forearmVector.y,
+                        y: upperArmVector.z * forearmVector.x - upperArmVector.x * forearmVector.z,
+                        z: upperArmVector.x * forearmVector.y - upperArmVector.y * forearmVector.x
                     };
                     
-                    // Apply comprehensive leg rotation
-                    rightUpLegBone.rotation.x = 
-                        Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
-                    rightUpLegBone.rotation.z = 
-                        -Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
-                    // Add some hip rotation for better stance
-                    rightUpLegBone.rotation.y = 
-                        -Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
+                    // Apply elbow rotation
+                    rightElbowBone.rotation.z = -(Math.atan2(
+                        forearmVector.y, forearmVector.x
+                    ) - Math.atan2(
+                        upperArmVector.y, upperArmVector.x
+                    ));
+                    
+                    // Add some twist based on wrist orientation
+                    rightElbowBone.rotation.y = Math.atan2(
+                        crossProduct.y, 
+                        Math.sqrt(crossProduct.x * crossProduct.x + crossProduct.z * crossProduct.z)
+                    ) * 0.5;
                 }
             }
             
-            // Enhanced knee rotation with better bend mechanics
-            const kneeRotationFactor = 3.0; // Increased for more visible effect
-            
-            // Find knee bones
-            const leftKneeBones = ['leftleg', 'mixamorigleftleg', 'left_leg', 'shin.l'];
-            const rightKneeBones = ['rightleg', 'mixamorigrightleg', 'right_leg', 'shin.r'];
-            
-            const leftKneeBone = this.findBone(leftKneeBones);
-            const rightKneeBone = this.findBone(rightKneeBones);
-            
-            if (leftKneeBone) {
-                const leftKnee = adjustedLandmarks[25];
-                const leftAnkle = adjustedLandmarks[27];
-                if (leftKnee && leftAnkle && leftKnee.visibility > 0.3) {
-                    // Calculate knee bend angle
-                    const kneeAngle = Math.PI - Math.acos(
-                        Math.min(1, Math.max(-1, 
-                            Math.cos(Math.atan2(leftAnkle.y - leftKnee.y, leftAnkle.z - leftKnee.z)) *
-                            Math.cos(Math.atan2(leftKnee.y - leftHip.y, leftKnee.z - leftHip.z))
-                        ))
-                    );
-                    leftKneeBone.rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
-                }
-            }
-            
-            if (rightKneeBone) {
-                const rightKnee = adjustedLandmarks[26];
-                const rightAnkle = adjustedLandmarks[28];
-                if (rightKnee && rightAnkle && rightKnee.visibility > 0.3) {
-                    // Calculate knee bend angle
-                    const kneeAngle = Math.PI - Math.acos(
-                        Math.min(1, Math.max(-1, 
-                            Math.cos(Math.atan2(rightAnkle.y - rightKnee.y, rightAnkle.z - rightKnee.z)) *
-                            Math.cos(Math.atan2(rightKnee.y - rightHip.y, rightKnee.z - rightHip.z))
-                        ))
-                    );
-                    rightKneeBone.rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
-                }
-            }
-            
-            // Head tracking
-            const possibleHeadBones = ['head', 'mixamorighead', 'neck', 'mixamorigneck', 'neck1', 'mixamorigneck1'];
-            const headBone = this.findBone(possibleHeadBones);
-            
-            if (headBone) {
-                const nose = adjustedLandmarks[0];
-                const leftEye = adjustedLandmarks[2];
-                const rightEye = adjustedLandmarks[5];
+            // Apply hands tracking only if hands tracking is enabled
+            if (this.trackingToggles.hands) {
+                // Add hand tracking implementation here
+                // Find wrist and finger bones
+                const leftWristBones = ['leftwrist', 'lefthand', 'mixamoriglefthand', 'left_hand', 'hand.l'];
+                const rightWristBones = ['rightwrist', 'righthand', 'mixamorigrighthand', 'right_hand', 'hand.r'];
                 
-                if (nose && leftEye && rightEye && nose.visibility > 0.5) {
-                    // Calculate face direction vector
-                    const faceCenter = {
-                        x: (leftEye.x + rightEye.x) / 2,
-                        y: (leftEye.y + rightEye.y) / 2,
-                        z: (leftEye.z + rightEye.z) / 2
-                    };
+                const leftWristBone = this.findBone(leftWristBones);
+                const rightWristBone = this.findBone(rightWristBones);
+                
+                const leftWrist = landmarks[15];
+                const rightWrist = landmarks[16];
+                
+                // Apply wrist rotation based on landmark positions
+                if (leftWristBone && leftWrist && leftWrist.visibility > 0.3) {
+                    const leftIndex = landmarks[19]; // Index finger tip
+                    const leftPinky = landmarks[17]; // Pinky MCP
                     
-                    const faceDirection = {
-                        x: nose.x - faceCenter.x,
-                        y: nose.y - faceCenter.y,
-                        z: nose.z - faceCenter.z
-                    };
+                    if (leftIndex && leftPinky && leftIndex.visibility > 0.2 && leftPinky.visibility > 0.2) {
+                        // Calculate hand orientation
+                        const handVector = {
+                            x: leftIndex.x - leftPinky.x,
+                            y: leftIndex.y - leftPinky.y,
+                            z: leftIndex.z - leftPinky.z
+                        };
+                        
+                        // Apply rotations to the wrist
+                        leftWristBone.rotation.z = Math.atan2(handVector.y, handVector.x);
+                        leftWristBone.rotation.x = Math.atan2(handVector.z, 
+                            Math.sqrt(handVector.x * handVector.x + handVector.y * handVector.y));
+                    }
+                }
+                
+                if (rightWristBone && rightWrist && rightWrist.visibility > 0.3) {
+                    const rightIndex = landmarks[20]; // Index finger tip
+                    const rightPinky = landmarks[18]; // Pinky MCP
                     
-                    // Apply head rotation
-                    headBone.rotation.y = Math.atan2(faceDirection.x, faceDirection.z) * 2;
-                    headBone.rotation.x = Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2;
+                    if (rightIndex && rightPinky && rightIndex.visibility > 0.2 && rightPinky.visibility > 0.2) {
+                        // Calculate hand orientation
+                        const handVector = {
+                            x: rightIndex.x - rightPinky.x,
+                            y: rightIndex.y - rightPinky.y,
+                            z: rightIndex.z - rightPinky.z
+                        };
+                        
+                        // Apply rotations to the wrist
+                        rightWristBone.rotation.z = -Math.atan2(handVector.y, handVector.x);
+                        rightWristBone.rotation.x = Math.atan2(handVector.z,
+                            Math.sqrt(handVector.x * handVector.x + handVector.y * handVector.y));
+                    }
+                }
+            }
+            
+            // Apply leg tracking only if legs tracking is enabled
+            if (this.trackingToggles.legs) {
+                // Enhanced hip and leg rotation with more accurate joint angles
+                const legRotationScaleFactor = 2.5; // Increased for better visual results
+                
+                // Find possible leg bone names
+                const leftLegBones = ['leftupleg', 'mixamorigleftupleg', 'left_upleg', 'thigh.l'];
+                const rightLegBones = ['rightupleg', 'mixamorigrightupleg', 'right_upleg', 'thigh.r'];
+                
+                const leftUpLegBone = this.findBone(leftLegBones);
+                const rightUpLegBone = this.findBone(rightLegBones);
+                
+                if (leftUpLegBone) {
+                    const leftKnee = landmarks[25];
+                    if (leftHip && leftKnee && leftHip.visibility > 0.3) {
+                        const hipToKnee = {
+                            x: leftKnee.x - leftHip.x,
+                            y: leftKnee.y - leftHip.y,
+                            z: leftKnee.z - leftHip.z
+                        };
+                        
+                        // Apply comprehensive leg rotation
+                        leftUpLegBone.rotation.x = 
+                            Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
+                        leftUpLegBone.rotation.z = 
+                            Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
+                        // Add some hip rotation for better stance
+                        leftUpLegBone.rotation.y = 
+                            Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
+                    }
+                }
+                
+                if (rightUpLegBone) {
+                    const rightKnee = landmarks[26];
+                    if (rightHip && rightKnee && rightHip.visibility > 0.3) {
+                        const hipToKnee = {
+                            x: rightKnee.x - rightHip.x,
+                            y: rightKnee.y - rightHip.y,
+                            z: rightKnee.z - rightHip.z
+                        };
+                        
+                        // Apply comprehensive leg rotation
+                        rightUpLegBone.rotation.x = 
+                            Math.atan2(hipToKnee.z, hipToKnee.y) * legRotationScaleFactor;
+                        rightUpLegBone.rotation.z = 
+                            -Math.atan2(hipToKnee.x, hipToKnee.y) * legRotationScaleFactor;
+                        // Add some hip rotation for better stance
+                        rightUpLegBone.rotation.y = 
+                            -Math.atan2(hipToKnee.x, hipToKnee.z) * legRotationScaleFactor * 0.5;
+                    }
+                }
+                
+                // Enhanced knee rotation with better bend mechanics
+                const kneeRotationFactor = 3.0; // Increased for more visible effect
+                
+                // Find knee bones
+                const leftKneeBones = ['leftleg', 'mixamorigleftleg', 'left_leg', 'shin.l'];
+                const rightKneeBones = ['rightleg', 'mixamorigrightleg', 'right_leg', 'shin.r'];
+                
+                const leftKneeBone = this.findBone(leftKneeBones);
+                const rightKneeBone = this.findBone(rightKneeBones);
+                
+                if (leftKneeBone) {
+                    const leftKnee = landmarks[25];
+                    const leftAnkle = landmarks[27];
+                    if (leftKnee && leftAnkle && leftKnee.visibility > 0.3) {
+                        // Calculate knee bend angle
+                        const kneeAngle = Math.PI - Math.acos(
+                            Math.min(1, Math.max(-1, 
+                                Math.cos(Math.atan2(leftAnkle.y - leftKnee.y, leftAnkle.z - leftKnee.z)) *
+                                Math.cos(Math.atan2(leftKnee.y - leftHip.y, leftKnee.z - leftHip.z))
+                            ))
+                        );
+                        leftKneeBone.rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
+                    }
+                }
+                
+                if (rightKneeBone) {
+                    const rightKnee = landmarks[26];
+                    const rightAnkle = landmarks[28];
+                    if (rightKnee && rightAnkle && rightKnee.visibility > 0.3) {
+                        // Calculate knee bend angle
+                        const kneeAngle = Math.PI - Math.acos(
+                            Math.min(1, Math.max(-1, 
+                                Math.cos(Math.atan2(rightAnkle.y - rightKnee.y, rightAnkle.z - rightKnee.z)) *
+                                Math.cos(Math.atan2(rightKnee.y - rightHip.y, rightKnee.z - rightHip.z))
+                            ))
+                        );
+                        rightKneeBone.rotation.x = -Math.abs(kneeAngle) * kneeRotationFactor;
+                    }
+                }
+            }
+            
+            // Head tracking only if head tracking is enabled
+            if (this.trackingToggles.head) {
+                const possibleHeadBones = ['head', 'mixamorighead', 'neck', 'mixamorigneck', 'neck1', 'mixamorigneck1'];
+                const headBone = this.findBone(possibleHeadBones);
+                
+                if (headBone) {
+                    const nose = landmarks[0];
+                    const leftEye = landmarks[2];
+                    const rightEye = landmarks[5];
+                    
+                    if (nose && leftEye && rightEye && nose.visibility > 0.5) {
+                        // Calculate face direction vector
+                        const faceCenter = {
+                            x: (leftEye.x + rightEye.x) / 2,
+                            y: (leftEye.y + rightEye.y) / 2,
+                            z: (leftEye.z + rightEye.z) / 2
+                        };
+                        
+                        const faceDirection = {
+                            x: nose.x - faceCenter.x,
+                            y: nose.y - faceCenter.y,
+                            z: nose.z - faceCenter.z
+                        };
+                        
+                        // Apply head rotation
+                        headBone.rotation.y = Math.atan2(faceDirection.x, faceDirection.z) * 2;
+                        headBone.rotation.x = Math.atan2(faceDirection.y, Math.sqrt(faceDirection.x ** 2 + faceDirection.z ** 2)) * 2;
+                    }
                 }
             }
         }
@@ -652,7 +741,7 @@ class BodyTrackingApp {
         // Update webcam overlay
         this.updateWebcamOverlay(landmarks);
     }
-    
+
     findBone(boneNames) {
         for (const name of boneNames) {
             if (this.bones[name.toLowerCase()]) {
@@ -670,15 +759,9 @@ class BodyTrackingApp {
         document.getElementById('toggle-video').addEventListener('click', () => {
             this.toggleVideo();
         });
-        
-        document.getElementById('calibrate').addEventListener('click', () => {
-            this.startCalibration();
-        });
     }
 
     toggleTracking() {
-        if (this.isCalibrating) return; // Don't start tracking during calibration
-        
         this.isTracking = !this.isTracking;
         const button = document.getElementById('start-tracking');
         
@@ -810,6 +893,75 @@ class BodyTrackingApp {
         }
     }
 
+    createDebugPanel() {
+        const debugPanel = document.createElement('div');
+        debugPanel.className = 'debug-panel';
+        document.body.appendChild(debugPanel);
+        
+        const title = document.createElement('h3');
+        title.textContent = 'Tracking Controls';
+        debugPanel.appendChild(title);
+        
+        // Create toggles for each body part
+        const bodyParts = ['head', 'torso', 'arms', 'hands', 'legs'];
+        
+        bodyParts.forEach(part => {
+            const toggle = document.createElement('div');
+            toggle.className = 'toggle-container';
+            
+            const label = document.createElement('label');
+            label.textContent = `Track ${part.charAt(0).toUpperCase() + part.slice(1)}`;
+            label.htmlFor = `toggle-${part}`;
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `toggle-${part}`;
+            checkbox.checked = this.trackingToggles[part];
+            
+            checkbox.addEventListener('change', (e) => {
+                this.trackingToggles[part] = e.target.checked;
+                this.updateDebugInfo(`${part.charAt(0).toUpperCase() + part.slice(1)} tracking: ${e.target.checked ? 'enabled' : 'disabled'}`);
+            });
+            
+            toggle.appendChild(checkbox);
+            toggle.appendChild(label);
+            debugPanel.appendChild(toggle);
+        });
+        
+        // Add a button to capture default pose
+        const captureButton = document.createElement('button');
+        captureButton.textContent = 'Capture Default Pose';
+        captureButton.className = 'debug-button';
+        captureButton.addEventListener('click', () => {
+            if (this.lastValidLandmarks) {
+                this.defaultPose = JSON.parse(JSON.stringify(this.lastValidLandmarks));
+                this.updateDebugInfo('Default pose captured!');
+            } else {
+                this.updateDebugInfo('No valid pose to capture!');
+            }
+        });
+        debugPanel.appendChild(captureButton);
+        
+        // Add a button to reset to T-pose
+        const resetButton = document.createElement('button');
+        resetButton.textContent = 'Reset to T-Pose';
+        resetButton.className = 'debug-button';
+        resetButton.addEventListener('click', () => {
+            this.resetToTPose();
+            this.updateDebugInfo('Reset to T-Pose');
+        });
+        debugPanel.appendChild(resetButton);
+    }
+    
+    resetToTPose() {
+        if (this.skeleton) {
+            // Reset all bone rotations to default T-pose
+            this.skeleton.bones.forEach(bone => {
+                bone.rotation.set(0, 0, 0);
+            });
+        }
+    }
+
     updateWebcamOverlay(landmarks) {
         if (!landmarks || !this.webcamOverlayContext) return;
         
@@ -864,163 +1016,6 @@ class BodyTrackingApp {
                 this.webcamOverlayContext.stroke();
             }
         }
-    }
-
-    startCalibration() {
-        if (this.isTracking) this.toggleTracking(); // Stop tracking first
-        
-        this.isCalibrating = true;
-        this.calibrationCountdown = 5; // 5 seconds countdown
-        
-        // Create calibration message element if it doesn't exist
-        if (!this.calibrationMessage) {
-            this.calibrationMessage = document.createElement('div');
-            this.calibrationMessage.style.position = 'absolute';
-            this.calibrationMessage.style.top = '50%';
-            this.calibrationMessage.style.left = '50%';
-            this.calibrationMessage.style.transform = 'translate(-50%, -50%)';
-            this.calibrationMessage.style.fontSize = '36px';
-            this.calibrationMessage.style.color = 'white';
-            this.calibrationMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-            this.calibrationMessage.style.padding = '20px';
-            this.calibrationMessage.style.borderRadius = '10px';
-            this.calibrationMessage.style.zIndex = '100';
-            document.body.appendChild(this.calibrationMessage);
-        }
-        
-        this.updateDebugInfo('Calibration: Stand in T-pose with arms straight out to sides');
-        this.calibrationMessage.style.display = 'block';
-        this.calibrationMessage.innerHTML = `Stand in T-pose!<br>
-            <div style="text-align:center; margin-top:10px;">
-                <svg width="100" height="100" viewBox="0 0 100 100">
-                    <circle cx="50" cy="30" r="10" fill="white"/>
-                    <line x1="50" y1="40" x2="50" y2="70" stroke="white" stroke-width="4"/>
-                    <line x1="50" y1="50" x2="10" y2="50" stroke="white" stroke-width="4"/>
-                    <line x1="50" y1="50" x2="90" y2="50" stroke="white" stroke-width="4"/>
-                    <line x1="50" y1="70" x2="30" y2="90" stroke="white" stroke-width="4"/>
-                    <line x1="50" y1="70" x2="70" y2="90" stroke="white" stroke-width="4"/>
-                </svg>
-            </div>
-            Calibrating in ${this.calibrationCountdown}`;
-    
-        // Start calibration process
-        this.calibrationInterval = setInterval(() => this.updateCalibration(), 1000);
-        
-        // Make sure video is visible during calibration
-        if (!this.videoVisible) this.toggleVideo();
-    }
-
-    applyCalibration(landmarks) {
-        if (!this.calibrationData) return landmarks;
-        
-        const adjustedLandmarks = JSON.parse(JSON.stringify(landmarks));
-        
-        // Get calibration references - ideal T-pose has arms straight out
-        const calibLeftShoulder = this.calibrationData[11];
-        const calibRightShoulder = this.calibrationData[12];
-        const calibLeftHip = this.calibrationData[23];
-        const calibRightHip = this.calibrationData[24];
-        
-        // Calculate calibration center and rotation
-        const calibTorsoCenter = {
-            x: (calibLeftShoulder.x + calibRightShoulder.x + calibLeftHip.x + calibRightHip.x) / 4,
-            y: (calibLeftShoulder.y + calibRightShoulder.y + calibLeftHip.y + calibRightHip.y) / 4,
-            z: (calibLeftShoulder.z + calibRightShoulder.z + calibLeftHip.z + calibRightHip.z) / 4
-        };
-        
-        // Determine if the user is mirrored compared to the model
-        // In webcam, left shoulder is on right side of screen
-        const shoulderWidth = Math.abs(calibRightShoulder.x - calibLeftShoulder.x);
-        const isMirrored = calibLeftShoulder.x > calibRightShoulder.x;
-        
-        // Apply adjustments to each landmark
-        for (let i = 0; i < adjustedLandmarks.length; i++) {
-            // Center adjustment (remove calibration center offset)
-            adjustedLandmarks[i].x -= (calibTorsoCenter.x - 0.5);
-            
-            // Fix mirroring issues - correctly swap left/right sides
-            if (isMirrored) {
-                // Mirror the x-coordinate across the center line
-                adjustedLandmarks[i].x = 1 - adjustedLandmarks[i].x;
-            }
-            
-            // Apply scale normalization based on calibration shoulder width
-            // This helps with different body sizes
-            const scaleFactor = 0.3 / shoulderWidth; // Normalize to standard width
-            adjustedLandmarks[i].x = 0.5 + (adjustedLandmarks[i].x - 0.5) * scaleFactor;
-        }
-        
-        return adjustedLandmarks;
-    }
-
-    updateCalibration() {
-        this.calibrationCountdown--;
-        
-        if (this.calibrationCountdown > 0) {
-            // Update countdown message
-            this.calibrationMessage.innerHTML = `Stand in T-pose!<br>
-                <div style="text-align:center; margin-top:10px;">
-                    <svg width="100" height="100" viewBox="0 0 100 100">
-                        <circle cx="50" cy="30" r="10" fill="white"/>
-                        <line x1="50" y1="40" x2="50" y2="70" stroke="white" stroke-width="4"/>
-                        <line x1="50" y1="50" x2="10" y2="50" stroke="white" stroke-width="4"/>
-                        <line x1="50" y1="50" x2="90" y2="50" stroke="white" stroke-width="4"/>
-                        <line x1="50" y1="70" x2="30" y2="90" stroke="white" stroke-width="4"/>
-                        <line x1="50" y1="70" x2="70" y2="90" stroke="white" stroke-width="4"/>
-                    </svg>
-                </div>
-                Calibrating in ${this.calibrationCountdown}`;
-        } else {
-            // Capture calibration data
-            clearInterval(this.calibrationInterval);
-            this.captureCalibrationData();
-        }
-    }
-    
-    async captureCalibrationData() {
-        this.calibrationMessage.innerHTML = "Processing... Hold your pose!";
-        
-        try {
-            const videoElement = document.getElementById('webcam');
-            
-            // Get a single pose detection for calibration
-            await this.poseDetector.send({image: videoElement});
-            
-            // Wait a moment to ensure we have landmarks
-            setTimeout(() => {
-                if (this.lastValidLandmarks) {
-                    this.calibrationData = JSON.parse(JSON.stringify(this.lastValidLandmarks));
-                    this.finishCalibration();
-                } else {
-                    this.calibrationMessage.innerHTML = "Calibration failed! Try again.";
-                    setTimeout(() => {
-                        this.isCalibrating = false;
-                        this.calibrationMessage.style.display = 'none';
-                    }, 2000);
-                }
-            }, 500);
-        } catch (error) {
-            console.error('Calibration error:', error);
-            this.calibrationMessage.innerHTML = "Calibration error! Try again.";
-            setTimeout(() => {
-                this.isCalibrating = false;
-                this.calibrationMessage.style.display = 'none';
-            }, 2000);
-        }
-    }
-    
-    finishCalibration() {
-        this.calibrationMessage.innerHTML = "Calibration complete!";
-        setTimeout(() => {
-            this.isCalibrating = false;
-            this.calibrationMessage.style.display = 'none';
-            this.updateDebugInfo('Calibration complete. Ready to track!');
-            
-            // Auto-start tracking after calibration
-            if (!this.isTracking) {
-                this.toggleTracking();
-            }
-        }, 1000);
     }
 
 }
