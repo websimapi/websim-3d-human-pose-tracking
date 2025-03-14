@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Pose } from 'mediapipe';
 
 // Main class to handle the application
 class BodyTrackingApp {
@@ -184,7 +183,7 @@ class BodyTrackingApp {
     }
 
     async initPoseDetector() {
-        const pose = new Pose({
+        const pose = new window.Pose({
             locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
             }
@@ -407,4 +406,3 @@ class BodyTrackingApp {
 document.addEventListener('DOMContentLoaded', () => {
     new BodyTrackingApp();
 });
-
